@@ -1,0 +1,24 @@
+import assert from 'node:assert/strict';
+import {Schema} from '@tiptap/pm/model';
+import {EditorState, TextSelection} from '@tiptap/pm/state';
+import {tableNodes} from '@tiptap/pm/tables';
+import {setColumnWidth, selectedColumnWidth} from '../lib/columns.ts';
+import {renderDocument, moveSection} from '../lib/document.ts';
+
+const schema = new Schema({nodes:{doc:{content:'block+'},paragraph:{group:'block',content:'text*'},text:{group:'inline'},...tableNodes({tableGroup:'block',cellContent:'paragraph+'})}});
+const cell = () => schema.nodes.table_cell.create(null,schema.nodes.paragraph.create());
+const row = () => schema.nodes.table_row.create(null,[cell(),cell()]);
+const doc = schema.nodes.doc.create(null,schema.nodes.table.create(null,[row(),row()]));
+let state = EditorState.create({doc,selection:TextSelection.create(doc,4)});
+const editor = {get state(){return state;}, view:{dispatch(tr){state=state.apply(tr);}}};
+assert.equal(selectedColumnWidth(editor),180);
+setColumnWidth(editor,320);
+assert.equal(selectedColumnWidth(editor),320);
+assert.equal(state.doc.firstChild.child(1).firstChild.attrs.colwidth[0],320);
+const html=renderDocument(state.doc.toJSON());
+assert.ok(html.includes('width:320px'));
+assert.ok(html.includes('colgroup'));
+assert.ok(!renderDocument({type:'doc',content:[{type:'codeBlock',content:[{type:'text',text:'<script>alert(1)</script>'}]}]}).includes('<script>'));
+const blocks={type:'doc',content:[{type:'heading',attrs:{level:2,id:'a'},content:[{type:'text',text:'A'}]},{type:'paragraph',content:[{type:'text',text:'A body'}]},{type:'heading',attrs:{level:2,id:'b'},content:[{type:'text',text:'B'}]}]};
+assert.equal(moveSection(blocks,0,1).content[1].attrs.id,'a');
+console.log('PASS: column widths across rows and export, code escaping, section movement');
