@@ -1,29 +1,10 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "../vendor/shadcn-tailwind-4.13.0.css";
-@import "../lib/document-media.css";
 
 @utility scrollbar-thin {
   scrollbar-width: thin;
 }
-
-.media-editor-node{border:1px solid #cdd9e9;border-radius:14px;background:#fff;padding:18px;margin:24px 0;min-width:0}
-.media-editor-node.selected{outline:2px solid #326dff;outline-offset:2px}
-.media-editor-title{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px;font-size:14px}
-.media-editor-title span,.media-help{font:12px/1.6 system-ui,sans-serif;color:#65748a}
-.plantuml-panes{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-.plantuml-source,.plantuml-preview{display:flex;flex-direction:column;gap:8px;min-width:0;font:12px/1.6 system-ui,sans-serif;color:#65748a}
-.plantuml-source textarea{width:100%;min-height:280px;resize:vertical;border:1px solid #dce4ef;border-radius:8px;padding:12px;background:#f6f8fc;color:#27384f;font:12px/1.65 ui-monospace,monospace;white-space:pre;overflow:auto}
-.plantuml-preview{overflow:auto;max-height:560px}.plantuml-preview>p{padding:24px;border:1px dashed #cdd9e9;border-radius:8px;text-align:center}
-.media-editor-actions{display:flex;align-items:center;gap:12px;margin:14px 0;font-size:12px}
-.media-editor-node button{cursor:pointer}.media-editor-node button:disabled{opacity:.45;cursor:default}
-.media-editor-actions button{display:inline-flex;align-items:center;gap:8px;background:#326dff;color:white;border-radius:8px;padding:9px 14px;font:600 13px/1.4 system-ui,sans-serif}
-.media-alt{display:flex;flex-direction:column;gap:6px;font-size:12px}.media-alt input,.carousel-slide-setting input{border:1px solid #dce4ef;border-radius:6px;padding:8px;min-width:0;background:white;color:#27384f}
-.media-error{color:#af273a;font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}
-.carousel-slide-list{display:grid;gap:8px}.carousel-slide-setting{display:flex;align-items:center;gap:8px}.carousel-slide-setting input{flex:1;font-size:12px}
-.document-editor .carousel-slide-setting img{width:44px;height:38px;object-fit:cover;margin:0;border-radius:5px}.carousel-slide-setting button{padding:5px;color:#65748a}
-.media-editor-node .media-help{margin-top:12px}.document-editor .plantuml-preview img{margin:0;object-fit:contain}
-@media(max-width:800px){.plantuml-panes{grid-template-columns:1fr}.media-editor-node{padding:12px}.carousel-slide-setting{gap:3px}}
 
 @utility scrollbar-none {
   scrollbar-width: none;
