@@ -1,4 +1,4 @@
-import {DocNode,renderDocument,headings,normalizeHeadings} from './document';
+import {DocNode,renderDocument,headings,normalizeHeadings,assertPublishable} from './document';
 import {Draft,decodeText} from './repository';
 export type PublishConfig={provider:'github'|'gitlab';project:string;branch:string;host:string;token:string};
 type RepoFile={content:string;sha:string};
@@ -7,8 +7,9 @@ export class Publisher {
   async api(path:string,init:RequestInit={}):Promise<any>{
     const c=this.config,url=c.provider==='github'?'https://api.github.com/repos/'+c.project+path:c.host.replace(/\/$/,'')+'/api/v4/projects/'+encodeURIComponent(c.project)+path;
     const response=await fetch(url,{...init,headers:{'Content-Type':'application/json',...(c.provider==='github'?{Authorization:'Bearer '+c.token,Accept:'application/vnd.github+json'}:{'PRIVATE-TOKEN':c.token}),...init.headers}});
-    if(!response.ok){const error=new Error(response.status===401?'Токен публикации недействителен':response.status===403?'Нет прав на публикацию в выбранном репозитории':response.status===404?'Файл или репозиторий документации не найден':`Публикация остановлена (${response.status}). Возможно, файлы изменились. Обновите данные перед повторной попыткой.`);Object.assign(error,{status:response.status});throw error;}
-    return response.json();
+    const raw=await response.text();let body:any=null;try{body=raw?JSON.parse(raw):null;}catch{}
+    if(!response.ok){const detail=body?.message||body?.errors?.map((e:any)=>e.message||e.code).filter(Boolean).join('; ');const error=new Error(response.status===401?'Токен публикации недействителен':response.status===403?'Нет прав на публикацию в выбранном репозитории':response.status===404?'Файл или репозиторий документации не найден':`Публикация остановлена (${response.status})${detail?`: ${detail}`:'. Возможно, файлы изменились.'}`);Object.assign(error,{status:response.status,details:body});throw error;}
+    return body;
   }
   async file(path:string,ref=this.config.branch):Promise<RepoFile|null>{
     try{if(this.config.provider==='gitlab'){const f=await this.api('/repository/files/'+encodeURIComponent(path)+'?ref='+encodeURIComponent(ref));return {content:decodeText(f.content),sha:f.last_commit_id};}
@@ -17,6 +18,7 @@ export class Publisher {
     }catch(e){if((e as any).status===404)return null;throw e;}
   }
   async publish(draft:Draft,content:DocNode){
+    assertPublishable(content);
     const c=this.config;if(!c.token.trim())throw new Error('Укажите токен для публикации в настройках');
     if(!/^[\w.-]+(?:\/[\w.-]+)+$/.test(c.project))throw new Error('Укажите репозиторий документации');
     const head=c.provider==='github'?await this.api('/git/ref/heads/'+encodeURIComponent(c.branch)):await this.api('/repository/branches/'+encodeURIComponent(c.branch));
@@ -67,7 +69,14 @@ export class Publisher {
     let sha:string;
     if(c.provider==='github'){
       const parent=await this.api('/git/commits/'+ref);
-      const tree=await this.api('/git/trees',{method:'POST',body:JSON.stringify({base_tree:parent.tree.sha,tree:Object.entries(writes).map(([path,content])=>({path,mode:'100644',type:'blob',content}))})});
+      // Upload file contents as blobs first. The tree request then contains only
+      // small SHA references, so generated HTML/JSON files cannot overflow the
+      // GitHub Git Trees request size limit.
+      const blobs=await Promise.all(Object.entries(writes).map(async([path,content])=>{
+        const blob=await this.api('/git/blobs',{method:'POST',body:JSON.stringify({content,encoding:'utf-8'})});
+        return {path,mode:'100644',type:'blob',sha:blob.sha};
+      }));
+      const tree=await this.api('/git/trees',{method:'POST',body:JSON.stringify({base_tree:parent.tree.sha,tree:blobs})});
       const commit=await this.api('/git/commits',{method:'POST',body:JSON.stringify({message:'Обновить документацию: '+draft.title,tree:tree.sha,parents:[ref]})});
       await this.api('/git/refs/heads/'+encodeURIComponent(c.branch),{method:'PATCH',body:JSON.stringify({sha:commit.sha,force:false})});sha=commit.sha;
     }else{

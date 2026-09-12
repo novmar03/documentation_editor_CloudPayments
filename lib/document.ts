@@ -10,7 +10,14 @@ export function safeLink(value:unknown,image=false):string {
   try{const u=new URL(s);if((image?['http:','https:']:['http:','https:','mailto:','tel:']).includes(u.protocol))return u.href;}catch{}
   return '';
 }
-const allowed=new Set(['doc','paragraph','text','heading','bulletList','orderedList','listItem','codeBlock','blockquote','hardBreak','horizontalRule','table','tableRow','tableCell','tableHeader','image','callout','docButton']);
+const allowed=new Set(['doc','paragraph','text','heading','bulletList','orderedList','listItem','codeBlock','blockquote','hardBreak','horizontalRule','table','tableRow','tableCell','tableHeader','image','callout','docButton','plantuml','carousel']);
+export function assertPublishable(doc:DocNode){
+  function visit(n:DocNode){
+    if(n.type==='plantuml'&&(!/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(n.attrs?.src||'')||!n.attrs?.source?.trim()||n.attrs.source!==n.attrs.renderedSource))throw new Error('Обновите рендер всех диаграмм PlantUML перед публикацией или скачиванием.');
+    if(n.type==='carousel'&&(!Array.isArray(n.attrs?.slides)||!n.attrs.slides.length||n.attrs.slides.some((s:any)=>!safeLink(s.src,true))))throw new Error('Добавьте изображения в каждую карусель перед публикацией или скачиванием.');
+    n.content?.forEach(visit);
+  }visit(doc);
+}
 export function validateDocument(doc:DocNode) {
   let count=0;
   const walk=(n:DocNode,depth:number)=>{
@@ -80,11 +87,20 @@ export function renderDocument(doc:DocNode):string {
         const sized=widths.some(w=>w>0);
         const columns=sized?`<colgroup>${widths.map(w=>`<col style="width:${num(w,60,1200,180)}px">`).join('')}</colgroup>`:'';
         const style=sized?` style="table-layout:fixed;width:${widths.reduce((sum,w)=>sum+num(w,60,1200,180),0)}px;min-width:0"`:'';
-        return `<div class="api-table-scroll" tabindex="0" aria-label="Таблица"><table${style}>${columns}${inside()}</table></div>`;
+        return `<div class="api-table-scroll" tabindex="0" aria-label="Таблица"><table data-freeze-row="${a.freezeRow===true}" data-freeze-column="${a.freezeColumn===true}"${style}>${columns}${inside()}</table></div>`;
       }
       case 'tableRow':return `<tr>${inside()}</tr>`;
       case 'tableCell':case 'tableHeader':{const tag=n.type==='tableCell'?'td':'th';return `<${tag} colspan="${num(a.colspan,1,50,1)}" rowspan="${num(a.rowspan,1,100,1)}">${inside()}</${tag}>`;}
       case 'image':{const src=safeLink(a.src,true);return src?`<figure style="text-align:${['left','right'].includes(a.align)?a.align:'center'}"><img src="${escapeHtml(src)}" alt="${escapeHtml(a.alt||'')}" style="width:${num(a.width,10,100,100)}%;max-width:100%;height:auto"></figure>`:'';}
+      case 'plantuml':{
+        const src=a.source===a.renderedSource&&/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(a.src||'')?a.src:'';
+        return src?`<figure class="doc-plantuml"><img src="${escapeHtml(src)}" alt="${escapeHtml(a.alt||'Диаграмма')}"></figure>`:'<p role="status">Диаграмма ещё не построена. Обновите рендер в редакторе.</p>';
+      }
+      case 'carousel':{
+        const slides=(Array.isArray(a.slides)?a.slides:[]).filter((s:any)=>safeLink(s.src,true));
+        if(!slides.length)return '<p role="status">Добавьте изображения в карусель.</p>';
+        return `<section class="doc-carousel" aria-roledescription="карусель" aria-label="${escapeHtml(a.label||'Галерея изображений')}" tabindex="0"><div class="doc-carousel-stage">${slides.map((s:any,i:number)=>`<figure data-carousel-slide role="group" aria-roledescription="слайд" aria-label="${i+1} из ${slides.length}"${i?' hidden':''}><img src="${escapeHtml(safeLink(s.src,true))}" alt="${escapeHtml(s.alt||'')}" draggable="false"></figure>`).join('')}</div>${slides.length>1?`<div class="doc-carousel-controls"><button type="button" data-carousel-action="previous" aria-label="Предыдущее изображение">&#8592;</button><span data-carousel-counter>1 / ${slides.length}</span><button type="button" data-carousel-action="next" aria-label="Следующее изображение">&#8594;</button><div class="doc-carousel-dots">${slides.map((_:any,i:number)=>`<button type="button" data-carousel-index="${i}" aria-label="Показать изображение ${i+1}" aria-current="${i===0}"></button>`).join('')}</div><button type="button" data-carousel-action="pause" aria-label="Приостановить автопрокрутку">Пауза</button></div>`:''}<span class="doc-media-sr" data-carousel-status aria-live="polite" aria-atomic="true"></span></section>`;
+      }
       case 'docButton':{const href=safeLink(a.href);return `<div style="text-align:${['left','right'].includes(a.align)?a.align:'center'};margin:24px 0"><a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;background:#326dff;color:#fff;text-decoration:none;border-radius:12px;padding:12px 20px;max-width:100%;width:${a.fullWidth?'100%':num(a.width,80,1000,240)+'px'};min-height:${num(a.height,32,200,56)}px;font-size:${num(a.fontSize,12,40,18)}px;font-weight:600">${escapeHtml(a.label||'Кнопка')}</a></div>`;}
       default:return '';
     }
