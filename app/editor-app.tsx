@@ -79,6 +79,7 @@ export default function EditorApp(){
     if(dirty.current===savedCounter.current&&!working.current.commit)return true;
     const snapshot={...working.current,content:currentContent.current,updated:new Date().toISOString()};
     try{await cacheDraft(snapshot);}catch{toast.error('Не удалось сохранить резервную копию на устройстве');}
+    if(deletingDraftRef.current)return false;
     if(!remote||!repoRef.current){setSaveState(dirty.current>savedCounter.current?'local':'ready');return true;}
     if(dirty.current===savedCounter.current&&working.current.commit)return true;
     const generation=dirty.current;setSaveState('saving');setSaveError('');
@@ -91,6 +92,7 @@ export default function EditorApp(){
   }
   const saveRef=useRef(save);saveRef.current=save;
   function changed(doc:DocNode,title?:string){
+    if(deletingDraftRef.current)return;
     if(!working.current)return;currentContent.current=doc;working.current={...working.current,content:doc,...(title!==undefined?{title}:{})};dirty.current++;setSaveState('dirty');setTick(t=>t+1);
     if(timer.current)clearTimeout(timer.current);timer.current=setTimeout(()=>{void saveRef.current();},1800);
   }
