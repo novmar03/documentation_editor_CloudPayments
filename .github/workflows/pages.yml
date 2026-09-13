@@ -3,6 +3,12 @@ name: Deploy editor to GitHub Pages
 on:
   push:
     branches: [main]
+  # Branch-based Pages can overwrite dist with raw TSX sources. Publish the
+  # compiled artifact again after that built-in workflow has finished.
+  workflow_run:
+    workflows: ["pages build and deployment"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -11,7 +17,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  group: editor-pages-deploy
   cancel-in-progress: true
 
 jobs:
