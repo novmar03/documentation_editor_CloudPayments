@@ -10,7 +10,7 @@ export function safeLink(value:unknown,image=false):string {
   try{const u=new URL(s);if((image?['http:','https:']:['http:','https:','mailto:','tel:']).includes(u.protocol))return u.href;}catch{}
   return '';
 }
-const allowed=new Set(['doc','paragraph','text','heading','bulletList','orderedList','listItem','codeBlock','blockquote','hardBreak','horizontalRule','table','tableRow','tableCell','tableHeader','image','callout','docButton']);
+const allowed=new Set(['doc','paragraph','text','heading','bulletList','orderedList','listItem','codeBlock','blockquote','hardBreak','horizontalRule','table','tableRow','tableCell','tableHeader','image','callout','docButton','anchor','carousel']);
 export function validateDocument(doc:DocNode) {
   let count=0;
   const walk=(n:DocNode,depth:number)=>{
@@ -20,7 +20,16 @@ export function validateDocument(doc:DocNode) {
     (n.content||[]).forEach(child=>walk(child,depth+1));
   };
   if(doc?.type!=='doc')throw new Error('Ожидается документ');walk(doc,0);
-  if(JSON.stringify(doc).length>1500000)throw new Error('Страница слишком большая. Изображения добавляйте через загрузку файлов.');
+  if(JSON.stringify(doc).length>40*1024*1024)throw new Error('Страница слишком большая. Разделите её на несколько страниц.');
+}
+export function assertAnchors(doc:DocNode){
+  const ids=new Set<string>();
+  const walk=(n:DocNode)=>{if(n.type==='anchor'||n.type==='heading'){
+    const id=n.attrs?.id;
+    if(n.type==='anchor'&&!/^[\p{L}\p{N}_-]+$/u.test(id||''))throw new Error('Имя якоря: буквы, цифры, дефис или подчёркивание');
+    if(id&&ids.has(id))throw new Error('Повторяющееся имя якоря или заголовка: '+id);
+    if(id)ids.add(id);
+  }n.content?.forEach(walk);};walk(doc);
 }
 export function normalizeHeadings(doc:DocNode):DocNode {
   const copy=structuredClone(doc),used=new Set<string>();
@@ -66,6 +75,12 @@ export function renderDocument(doc:DocNode):string {
         }return s;
       }
       case 'paragraph':return `<p${align}>${inside()||'<br>'}</p>`;
+      case 'anchor':return `<span data-doc-anchor="" class="doc-anchor" id="${escapeHtml(a.id)}"></span>`;
+      case 'carousel':{
+        const slides=(Array.isArray(a.slides)?a.slides:[]).filter((s:any)=>safeLink(s.src,true));
+        if(!slides.length)return '<p>Добавьте фотографии в карусель.</p>';
+        return `<section data-doc-carousel="" class="doc-carousel" aria-label="Карусель изображений">${slides.map((s:any,i:number)=>`<figure data-slide=""${i?' hidden':''}><img src="${escapeHtml(safeLink(s.src,true))}" alt="${escapeHtml(s.alt||'')}"/><figcaption>${escapeHtml(s.alt||'')}</figcaption></figure>`).join('')}${slides.length>1?`<nav aria-label="Переключение слайдов"><button type="button" data-slide-step="-1" aria-label="Предыдущий слайд">←</button>${slides.map((_:any,i:number)=>`<button type="button" data-slide-to="${i}" aria-label="Слайд ${i+1}" aria-current="${i===0}">${i+1}</button>`).join('')}<button type="button" data-slide-step="1" aria-label="Следующий слайд">→</button><button type="button" data-slide-pause="" aria-pressed="false">Пауза</button></nav>`:''}</section>`;
+      }
       case 'heading':{const level=num(a.level,2,6,2);return `<h${level} id="${escapeHtml(a.id||slug(textOf(n)))}"${align}>${inside()}</h${level}>`;}
       case 'bulletList':return `<ul>${inside()}</ul>`;
       case 'orderedList':return `<ol start="${num(a.start,1,10000,1)}">${inside()}</ol>`;

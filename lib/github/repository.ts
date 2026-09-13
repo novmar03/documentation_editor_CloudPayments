@@ -1,4 +1,4 @@
-import {DocNode} from './document';
+import type {DocNode} from '../document/model.ts';
 export type RepoConfig={project:string;defaultBranch:string;token:string};
 export const DRAFT_BRANCH='documentation-drafts';
 export type Draft={id:string;title:string;content:DocNode;updated:string;baseHtml:string;publishedHtml?:string;commit?:string};

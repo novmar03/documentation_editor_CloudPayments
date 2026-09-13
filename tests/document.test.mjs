@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import {Schema} from '@tiptap/pm/model';
 import {EditorState, TextSelection} from '@tiptap/pm/state';
 import {tableNodes} from '@tiptap/pm/tables';
-import {setColumnWidth, selectedColumnWidth} from '../lib/columns.ts';
-import {renderDocument, moveSection} from '../lib/document.ts';
+import {setColumnWidth, selectedColumnWidth} from '../lib/document/columns.ts';
+import {renderDocument, moveSection, assertAnchors} from '../lib/document/model.ts';
+import {applyPageChanges} from '../lib/document/page-structure.ts';
 
 const schema = new Schema({nodes:{doc:{content:'block+'},paragraph:{group:'block',content:'text*'},text:{group:'inline'},...tableNodes({tableGroup:'block',cellContent:'paragraph+'})}});
 const cell = () => schema.nodes.table_cell.create(null,schema.nodes.paragraph.create());
@@ -22,3 +23,13 @@ assert.ok(!renderDocument({type:'doc',content:[{type:'codeBlock',content:[{type:
 const blocks={type:'doc',content:[{type:'heading',attrs:{level:2,id:'a'},content:[{type:'text',text:'A'}]},{type:'paragraph',content:[{type:'text',text:'A body'}]},{type:'heading',attrs:{level:2,id:'b'},content:[{type:'text',text:'B'}]}]};
 assert.equal(moveSection(blocks,0,1).content[1].attrs.id,'a');
 console.log('PASS: column widths across rows and export, code escaping, section movement');
+const anchored={type:'doc',content:[{type:'paragraph',content:[{type:'anchor',attrs:{id:'оплата'}}]},{type:'paragraph',content:[{type:'text',text:'Перейти',marks:[{type:'link',attrs:{href:'#оплата'}}]}]}]};
+assert.ok(renderDocument(anchored).includes('id="оплата"'));
+assert.ok(renderDocument(anchored).includes('href="#оплата"'));
+assert.throws(()=>assertAnchors({type:'doc',content:[...anchored.content,{type:'anchor',attrs:{id:'оплата'}}]}),/Повторяющееся/);
+const initialPages={groups:[{id:'g',title:'Group',items:[{id:'one',title:'One'},{id:'two',title:'Two'}]}],pages:{one:{},two:{}}};
+const changedPages=applyPageChanges(initialPages,[{type:'create',id:'new',title:'New',group:'g'},{type:'move',id:'new',direction:-1},{type:'delete',id:'one'}]);
+assert.deepEqual(changedPages.groups[0].items.map(p=>p.id),['new','two']);
+assert.ok(initialPages.pages.one);
+assert.throws(()=>applyPageChanges(initialPages,[{type:'create',id:'../bad',title:'Bad',group:'g'}]),/Некорректный/);
+console.log('PASS: anchor export and duplicate validation; page create, order and delete');
