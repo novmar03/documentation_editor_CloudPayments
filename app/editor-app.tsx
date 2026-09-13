@@ -20,7 +20,7 @@ import seed from '@/data/seed.json';
 import {extensions,languages} from './editor-extensions';
 import {type DocNode,normalizeHeadings,headings,moveSection,renderDocument,safeLink} from '@/lib/document/model.ts';
 import {Repository,type Draft,storedDocument} from '@/lib/github/repository.ts';
-import {cacheDraft,recoverDraft} from '@/lib/storage/recovery.ts';
+import {cacheDraft,recoverDraft,removeCachedDraft} from '@/lib/storage/recovery.ts';
 import {Publisher} from '@/lib/github/publish.ts';
 import {PageManager} from './page-manager';
 import type {PageChange} from '@/lib/document/page-structure.ts';
@@ -68,11 +68,15 @@ export default function EditorApp(){
   const [titles,setTitles]=useState<Record<string,string>>({}),[publication,setPublication]=useState<string|null>(null);
   const working=useRef<Draft|null>(null),dirty=useRef(0),savedCounter=useRef(0),inflight=useRef<Promise<boolean>|null>(null),timer=useRef<ReturnType<typeof setTimeout>|null>(null);
   const currentContent=useRef<DocNode>(blank),latestEditor=useRef<Editor|null>(null);
+  const [deleteDraftOpen,setDeleteDraftOpen]=useState(false),[deletingDraft,setDeletingDraft]=useState(false);
+  const deletingDraftRef=useRef(false);
   const selectedHeading=editor?.state.selection.$from.parent.type.name==='heading'?editor.state.selection.$from.parent.attrs.id:null;
   const outline=editor?headings(editor.getJSON() as DocNode):[];
   async function save(remote=true):Promise<boolean>{
+    if(deletingDraftRef.current)return false;
     if(inflight.current){await inflight.current;if(dirty.current===savedCounter.current)return true;return save(remote);}
     if(!working.current)return true;
+    if(dirty.current===savedCounter.current&&!working.current.commit)return true;
     const snapshot={...working.current,content:currentContent.current,updated:new Date().toISOString()};
     try{await cacheDraft(snapshot);}catch{toast.error('Не удалось сохранить резервную копию на устройстве');}
     if(!remote||!repoRef.current){setSaveState(dirty.current>savedCounter.current?'local':'ready');return true;}
@@ -91,6 +95,7 @@ export default function EditorApp(){
     if(timer.current)clearTimeout(timer.current);timer.current=setTimeout(()=>{void saveRef.current();},1800);
   }
   async function openPage(id:string,forceRemote=false){
+    if(deletingDraftRef.current)return;
     if(!pages[id])return;
     if(timer.current)clearTimeout(timer.current);
     if(working.current&&!(await saveRef.current())){toast.error('Сначала сохраните текущие изменения или скачайте HTML');return;}
@@ -128,6 +133,25 @@ export default function EditorApp(){
     }catch(e){toast.error(errorText(e));}finally{setConnecting(false);}
   }
   async function showHistory(){if(!repository){setConnectionOpen(true);return;}setHistoryOpen(true);setHistoryLoading(true);try{setHistory(await repository.history(loaded!.id));}catch(e){toast.error(errorText(e));}finally{setHistoryLoading(false);}}
+  async function deleteDraft(){
+    if(!working.current||deletingDraftRef.current)return;
+    const id=working.current.id;
+    deletingDraftRef.current=true;setDeletingDraft(true);
+    latestEditor.current?.setEditable(false);
+    if(timer.current)clearTimeout(timer.current);
+    try{
+      if(inflight.current)await inflight.current;
+      await refreshCatalog();
+      if(repoRef.current)await repoRef.current.remove(id,working.current?.commit);
+      await removeCachedDraft(id);
+      working.current=null;dirty.current=0;savedCounter.current=0;
+      setLoaded(null);setRestoreCandidate(null);setHistory([]);setDeleteDraftOpen(false);
+      deletingDraftRef.current=false;
+      await openPage(pages[id]?id:Object.keys(pages)[0]);
+      toast.success('Черновик удалён. Открыта опубликованная версия.');
+    }catch(e){toast.error(errorText(e));}
+    finally{deletingDraftRef.current=false;setDeletingDraft(false);latestEditor.current?.setEditable(!preview);}
+  }
   async function restore(sha:string){try{const draft=await repository!.revision(loaded!.id,sha);setRestoreCandidate({...draft,content:await repository!.hydrate(draft.content)});}catch(e){toast.error(errorText(e));}}
   function applyRestore(){if(!restoreCandidate||!editor)return;editor.commands.setContent(restoreCandidate.content);working.current!.title=restoreCandidate.title;setLoaded(old=>old?{...old,title:restoreCandidate.title}:old);changed(editor.getJSON() as DocNode,restoreCandidate.title);setRestoreCandidate(null);setHistoryOpen(false);toast.success('Версия восстановлена в черновик');}
   async function publish(){
@@ -154,7 +178,7 @@ export default function EditorApp(){
         })}</nav>}</TabsContent></Tabs></SidebarContent>
       <SidebarFooter className="sidebar-bottom"><Button variant="ghost" onClick={()=>setConnectionOpen(true)}><GitBranch size={17}/>{repository?'GitHub подключён':'Подключить GitHub'}{repository&&<Check size={15}/>}</Button><a href={DOCS_URL} target="_blank" rel="noopener noreferrer">Открыть документацию<ExternalLink size={14}/></a></SidebarFooter>
     </Sidebar>
-    <SidebarInset className="editor-inset"><header className="workspace-header"><div className="workspace-heading"><SidebarTrigger/><span>Рабочее пространство</span><ChevronRight size={14}/><strong>{loaded?.title||'Документация'}</strong></div><div className="header-actions"><IconButton label="История версий" onClick={()=>void showHistory()}><History size={18}/></IconButton><IconButton label="Скачать страницу HTML" onClick={download}><Download size={18}/></IconButton><Button variant="outline" onClick={()=>setPreview(v=>!v)}><Eye size={16}/><span className="optional-label">{preview?'Редактировать':'Предпросмотр'}</span></Button><Button variant="outline" onClick={()=>repository?void saveRef.current().then(ok=>{if(ok)toast.success('Черновик сохранён');}):setConnectionOpen(true)} disabled={saveState==='saving'}>{saveState==='saving'?<Loader2 className="spin" size={16}/>:<Save size={16}/>}<span className="optional-label">Сохранить</span></Button><Button onClick={()=>repository?setPublishOpen(true):setConnectionOpen(true)} disabled={publishing||loading}><Upload size={16}/><span>Опубликовать</span></Button></div></header>
+    <SidebarInset className="editor-inset"><header className="workspace-header"><div className="workspace-heading"><SidebarTrigger/><span>Рабочее пространство</span><ChevronRight size={14}/><strong>{loaded?.title||'Документация'}</strong></div><div className="header-actions"><IconButton label="Удалить черновик страницы" disabled={loading||publishing||deletingDraft||!loaded} onClick={()=>setDeleteDraftOpen(true)}><Trash2 size={18}/></IconButton><IconButton label="История версий" onClick={()=>void showHistory()}><History size={18}/></IconButton><IconButton label="Скачать страницу HTML" onClick={download}><Download size={18}/></IconButton><Button variant="outline" onClick={()=>setPreview(v=>!v)}><Eye size={16}/><span className="optional-label">{preview?'Редактировать':'Предпросмотр'}</span></Button><Button variant="outline" onClick={()=>repository?void saveRef.current().then(ok=>{if(ok)toast.success('Черновик сохранён');}):setConnectionOpen(true)} disabled={saveState==='saving'}>{saveState==='saving'?<Loader2 className="spin" size={16}/>:<Save size={16}/>}<span className="optional-label">Сохранить</span></Button><Button onClick={()=>repository?setPublishOpen(true):setConnectionOpen(true)} disabled={publishing||loading}><Upload size={16}/><span>Опубликовать</span></Button></div></header>
       <div className="document-status"><span className={'save-label '+saveState}>{saveState==='saving'?<Loader2 className="spin" size={14}/>:saveState==='saved'?<Cloud size={15}/>:saveState==='error'?<CloudOff size={15}/>:<FileText size={14}/>}<span role="status">{statusText}</span>{saveState==='saved'&&savedAt&&<time>{new Date(savedAt).toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'})}</time>}</span><Button className="mobile-settings" variant="ghost" size="sm" onClick={()=>setSettingsOpen(true)}><Settings2 size={16}/>Настройки</Button></div>
       {saveError&&<div className="error-strip" role="alert">{saveError}<Button variant="outline" size="sm" onClick={()=>void saveRef.current()}>Повторить</Button></div>}
       {publication&&<div className="published-strip"><Check size={16}/>Страница отправлена на публикацию.<a href={DOCS_URL+'#/'+loaded?.id} target="_blank" rel="noopener noreferrer">Открыть сайт</a></div>}
@@ -163,10 +187,11 @@ export default function EditorApp(){
     </SidebarInset>
     <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}><SheetContent><SheetHeader><SheetTitle>Настройки блока</SheetTitle></SheetHeader><div className="p-5">{properties}</div></SheetContent></Sheet>
     <Dialog open={connectionOpen} onOpenChange={v=>{setConnectionOpen(v);if(!v)setToken('');}}><DialogContent className="connection-dialog"><DialogHeader><DialogTitle><GitBranch size={22}/>Подключить GitHub</DialogTitle><DialogDescription>Сохраняйте черновики и публикуйте готовые страницы.</DialogDescription></DialogHeader><div className="connection-repos"><div><span>Редактор и черновики</span><strong>{EDITOR_REPO}</strong></div><div><span>Опубликованная документация</span><strong>{DOCS_REPO}</strong></div></div>{repository?<><p>Подключение действует до закрытия этой страницы.</p><Button variant="outline" onClick={()=>{repoRef.current=null;setRepository(null);setConnectionOpen(false);toast.info('GitHub отключён');}}>Отключить</Button></>:<><ol className="connection-steps"><li><a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">Создайте токен GitHub<ExternalLink size={13}/></a></li><li>Выберите эти два репозитория в <strong>Repository access</strong>.</li><li>Для <strong>Contents</strong> установите <strong>Read and write</strong>.</li></ol><Label htmlFor="github-token">Токен для этого сеанса</Label><Input id="github-token" type="password" autoComplete="off" spellCheck={false} placeholder="github_pat_…" value={token} onChange={e=>setToken(e.target.value)}/><p className="form-help">Токен используется только в текущем окне и не сохраняется в файлах или черновиках.</p><DialogFooter><Button disabled={connecting||!token.trim()} onClick={()=>void connect()}>{connecting?<Loader2 className="spin" size={16}/>:<GitBranch size={16}/>}Подключить</Button></DialogFooter></>}</DialogContent></Dialog>
-    <Dialog open={historyOpen} onOpenChange={setHistoryOpen}><DialogContent><DialogHeader><DialogTitle>История страницы</DialogTitle><DialogDescription>{loaded?.title}. Восстановление создаст новый черновик.</DialogDescription></DialogHeader><div className="history-list">{historyLoading?<Loader2 className="spin"/>:history.length===0?<p>История появится после первого сохранения в GitHub.</p>:history.map(row=><div className="history-row" key={row.sha}><div><strong>{new Date(row.commit.author.date).toLocaleString('ru')}</strong><span>{row.commit.message.split('\n')[0].replace(' [skip ci]','')}</span></div><Button size="sm" variant="outline" onClick={()=>void restore(row.sha)}>Восстановить</Button></div>)}</div></DialogContent></Dialog>
+    <Dialog open={historyOpen} onOpenChange={setHistoryOpen}><DialogContent><DialogHeader><DialogTitle>История страницы</DialogTitle><DialogDescription>{loaded?.title}. Восстановление создаст новый черновик.</DialogDescription></DialogHeader><div className="history-list">{historyLoading?<Loader2 className="spin"/>:history.length===0?<p>История появится после первого сохранения в GitHub.</p>:history.map(row=><div className="history-row" key={row.sha}><div><strong>{new Date(row.commit.author.date).toLocaleString('ru')}</strong><span>{row.commit.message.split('\n')[0].replace(' [skip ci]','')}</span></div><Button size="sm" variant="outline" disabled={row.commit.message.startsWith("Удалить черновик:")} onClick={()=>void restore(row.sha)}>{row.commit.message.startsWith("Удалить черновик:")?"Черновик удалён":"Восстановить"}</Button></div>)}</div></DialogContent></Dialog>
     <AlertDialog open={!!restoreCandidate} onOpenChange={v=>{if(!v)setRestoreCandidate(null);}}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Восстановить эту версию?</AlertDialogTitle><AlertDialogDescription>Содержимое текущего черновика будет заменено. Сохранённые версии останутся в истории.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Отмена</AlertDialogCancel><AlertDialogAction onClick={applyRestore}>Восстановить</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
     <Dialog open={publishOpen} onOpenChange={setPublishOpen}><DialogContent><DialogHeader><DialogTitle>Опубликовать страницу?</DialogTitle><DialogDescription>На сайте документации обновится страница «{loaded?.title}».</DialogDescription></DialogHeader><div className="publish-summary"><FileText size={22}/><div><strong>{loaded?.title}</strong><span>{outline.length} заголовков · {DOCS_REPO}</span></div></div><p>Перед публикацией проверьте страницу в предпросмотре. Редактор сохранит историю и отправит обновление на сайт.</p><DialogFooter><Button variant="outline" onClick={()=>{setPublishOpen(false);setPreview(true);}}>Предпросмотр</Button><Button disabled={publishing} onClick={()=>void publish()}>{publishing?<Loader2 size={16} className="spin"/>:<Upload size={16}/>}Опубликовать</Button></DialogFooter></DialogContent></Dialog>
     <Dialog open={manageOpen} onOpenChange={setManageOpen}><DialogContent><DialogHeader><DialogTitle>Управление страницами</DialogTitle><DialogDescription>Создание, удаление и порядок страниц документации.</DialogDescription></DialogHeader>{manageOpen&&<PageManager data={publishedData} onPublish={manage} onClose={()=>setManageOpen(false)}/>}</DialogContent></Dialog>
+    <AlertDialog open={deleteDraftOpen} onOpenChange={v=>{if(!deletingDraft)setDeleteDraftOpen(v);}}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Удалить черновик «{loaded?.title}»?</AlertDialogTitle><AlertDialogDescription>{repository?'Будут удалены текущий черновик в GitHub и копия на этом устройстве. История GitHub сохранится.':'Будет удалена только копия на этом устройстве. Для удаления черновика в GitHub сначала подключитесь.'} Несохранённые правки будут отброшены. Опубликованная страница останется на сайте.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={deletingDraft}>Отмена</AlertDialogCancel><Button disabled={deletingDraft} onClick={()=>void deleteDraft()}>{deletingDraft?'Удаляем…':'Удалить черновик'}</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
     <Toaster theme="light" richColors position="bottom-right"/>
   </SidebarProvider>;
 }

@@ -27,6 +27,13 @@ export class Repository {
   async load(id:string):Promise<Draft|null>{await this.ensureBranch();try{const file=await this.file(this.draftPath(id));return {...JSON.parse(decodeText(file.content)),commit:file.sha};}catch(e){if((e as any).status===404)return null;throw e;}}
   async save(draft:Draft,expectedSha?:string):Promise<Draft>{await this.ensureBranch();const payload={...draft};delete payload.commit;const result=await this.request('/contents/'+this.draftPath(draft.id),{method:'PUT',body:JSON.stringify({branch:DRAFT_BRANCH,content:encodeText(JSON.stringify(payload)),message:'Черновик: '+draft.title+' [skip ci]',...(expectedSha?{sha:expectedSha}:{})})});return {...payload,commit:result.content.sha};}
   async history(id:string){await this.ensureBranch();return this.request('/commits?sha='+DRAFT_BRANCH+'&path='+encodeURIComponent(this.draftPath(id))+'&per_page=30');}
+  async remove(id:string,expectedSha?:string){
+    let file:any;
+    try{file=await this.request('/contents/'+this.draftPath(id)+'?ref='+DRAFT_BRANCH);}
+    catch(e){if((e as any).status===404)return;throw e;}
+    if(!expectedSha||file.sha!==expectedSha)throw new Error('Черновик изменился в другом окне. Загрузите актуальную версию перед удалением.');
+    await this.request('/contents/'+this.draftPath(id),{method:'DELETE',body:JSON.stringify({branch:DRAFT_BRANCH,sha:expectedSha,message:'Удалить черновик: '+id+' [skip ci]'})});
+  }
   async revision(id:string,sha:string){const file=await this.file(this.draftPath(id),sha);return JSON.parse(decodeText(file.content)) as Draft;}
   async upload(file:File){
     if(!['image/png','image/jpeg','image/webp','image/gif'].includes(file.type))throw new Error('Выберите PNG, JPG, WebP или GIF');if(file.size>5*1024*1024)throw new Error('Максимальный размер изображения — 5 МБ');
