@@ -1,8 +1,5 @@
-import {type DocNode,renderDocument,headings,normalizeHeadings,assertAnchors} from '../document/model.ts';
-import {type Draft,decodeText} from './repository.ts';
-import {type PageChange,applyPageChanges,structureKey,sidebarSource} from '../document/page-structure.ts';
-import editedSectionTemplate from './templates/EditedSection.jsx.txt?raw';
-import interactionsSource from '../runtime/interactions.js?raw';
+import {DocNode,renderDocument,headings,normalizeHeadings} from './document';
+import {Draft,decodeText} from './repository';
 export type PublishConfig={provider:'github'|'gitlab';project:string;branch:string;host:string;token:string};
 type RepoFile={content:string;sha:string};
 export class Publisher {
@@ -20,51 +17,7 @@ export class Publisher {
       const b=await this.api('/git/blobs/'+f.sha);return {content:decodeText(b.content),sha:f.sha};
     }catch(e){if((e as any).status===404)return null;throw e;}
   }
-  private async commitFiles(ref:string,writes:Record<string,string>,message:string,previous=new Map<string,RepoFile|null>()){
-    const changed=Object.entries(writes).filter(([path,content])=>previous.get(path)?.content!==content);
-    if(!changed.length)return ref;
-    const parent=await this.api('/git/commits/'+ref),entries=[];
-    for(const [path,content] of changed){
-      try{
-        const blob=await this.api('/git/blobs',{method:'POST',body:JSON.stringify({content,encoding:'utf-8'})});
-        entries.push({path,mode:'100644',type:'blob',sha:blob.sha});
-      }catch(error){throw new Error('Не удалось загрузить '+path+': '+(error instanceof Error?error.message:String(error)),{cause:error});}
-    }
-    const tree=await this.api('/git/trees',{method:'POST',body:JSON.stringify({base_tree:parent.tree.sha,tree:entries})});
-    const commit=await this.api('/git/commits',{method:'POST',body:JSON.stringify({message,tree:tree.sha,parents:[ref]})});
-    await this.api('/git/refs/heads/'+encodeURIComponent(this.config.branch),{method:'PATCH',body:JSON.stringify({sha:commit.sha,force:false})});
-    return commit.sha;
-  }
-  async managePages(changes:PageChange[],expectedGroups:any[]){
-    if(this.config.provider!=='github')throw new Error('Управление страницами доступно для GitHub');
-    const head=await this.api('/git/ref/heads/'+encodeURIComponent(this.config.branch)),ref=head.object.sha;
-    const index=await this.file('index.html',ref);
-    const marker=/<script id="document-data" type="application\/json">([\s\S]*?)<\/script>/;
-    const match=index?.content.match(marker);if(!match)throw new Error('Не удалось прочитать структуру документации');
-    const data=JSON.parse(match[1]);
-    if(structureKey(data.groups)!==structureKey(expectedGroups))throw new Error('Структура изменилась в другом окне. Обновите список страниц и повторите.');
-    const next=applyPageChanges(data,changes);
-    const overlayFile=await this.file('src/content/editor-pages.json',ref),overlay=JSON.parse(overlayFile?.content||'{}');
-    const deletedFile=await this.file('src/content/deleted-pages.json',ref),deleted=new Set<string>(JSON.parse(deletedFile?.content||'[]'));
-    const writes:Record<string,string>={};
-    for(const id of Object.keys(data.pages))if(!next.pages[id]){delete overlay[id];deleted.add(id);writes['docs/'+id+'.md']='---\ntitle: Страница удалена\n---\n\nЭта страница удалена из документации. Выберите другой раздел в меню.\n';}
-    for(const id of Object.keys(next.pages))if(!data.pages[id]){
-      if(deleted.has(id))throw new Error('Этот адрес принадлежал удалённой странице. Выберите новый адрес: '+id);
-      if(await this.file('docs/'+id+'.md',ref))throw new Error('Файл по этому адресу уже существует: '+id);
-      const p=next.pages[id];overlay[id]={title:p.title,html:p.html,toc:[],segments:['<p><br></p>'],content:{type:'doc',content:[{type:'paragraph'}]}};
-      writes['docs/'+id+'.md']='---\ntitle: '+JSON.stringify(p.title)+'\n---\n\nimport EditedSection from \'@site/src/components/EditedSection\';\n\n<EditedSection page="'+id+'" index={0} />\n';
-    }
-    writes['index.html']=index!.content.replace(marker,()=>'<script id="document-data" type="application/json">'+JSON.stringify(next).replace(/</g,'\\u003c')+'</script>');
-    writes['src/components/navigation.json']=JSON.stringify(next.groups,null,2)+'\n';
-    writes['src/content/editor-pages.json']=JSON.stringify(overlay,null,2)+'\n';
-    writes['sidebars.js']=sidebarSource();
-    writes['src/content/deleted-pages.json']=JSON.stringify([...deleted])+'\n';
-    const previous=new Map([['index.html',index],['src/content/editor-pages.json',overlayFile],['src/content/deleted-pages.json',deletedFile]]);
-    const sha=await this.commitFiles(ref,writes,'Обновить структуру страниц документации',previous);
-    return {data:next,sha};
-  }
   async publish(draft:Draft,content:DocNode){
-    assertAnchors(content);
     const c=this.config;if(!c.token.trim())throw new Error('Укажите токен для публикации в настройках');
     if(!/^[\w.-]+(?:\/[\w.-]+)+$/.test(c.project))throw new Error('Укажите репозиторий документации');
     const head=c.provider==='github'?await this.api('/git/ref/heads/'+encodeURIComponent(c.branch)):await this.api('/repository/branches/'+encodeURIComponent(c.branch));
@@ -89,7 +42,7 @@ export class Publisher {
     const segments=[inner.slice(0,matches[0]?.index??inner.length),...matches.map((m,i)=>inner.slice(m.index!+m[0].length,matches[i+1]?.index??inner.length))];
     overlay[draft.id]={title:draft.title,html,toc,segments,content:doc};
     writes['src/content/editor-pages.json']=JSON.stringify(overlay,null,2)+'\n';
-    writes['src/components/EditedSection.jsx']=editedSectionTemplate;
+    writes['src/components/EditedSection.jsx']=`import React from 'react';\nimport useBaseUrl from '@docusaurus/useBaseUrl';\nimport content from '../content/editor-pages.json';\nimport {handleCodeCopy} from './document-ui';\nexport default function EditedSection({page,index}) {\n const base=useBaseUrl('/');\n const html=(content[page]?.segments[index]||'').replace(/href="#\\/([^"@]+)(?:@([^"\\s]+))?"/g,(_,route,anchor)=>'href="'+base+route+'/'+(anchor?'#'+anchor:'')+'"');\n return <div className="imported-api" onClick={handleCodeCopy} dangerouslySetInnerHTML={{__html:html}}/>;\n}\n`;
     const existingDoc=files.get('docs/'+draft.id+'.md')?.content||'---\n---\n';
     let front=existingDoc.match(/^---\r?\n[\s\S]*?\r?\n---/)?.[0]||'---\n---';
     front=front.replace(/^title:.*\n/m,'');front=front.replace(/^---\n/,'---\ntitle: '+JSON.stringify(draft.title)+'\n');
@@ -112,13 +65,17 @@ export class Publisher {
       sidebar=sidebar.replace(line,`const editorPagesPath = path.join(__dirname, 'src/content/editor-pages.json');\nconst editorPages = fs.existsSync(editorPagesPath) ? JSON.parse(fs.readFileSync(editorPagesPath,'utf8')) : {};\nconst apiHeadings = makeApiOutline(editorPages['tech/api'] ? editorPages['tech/api'].toc.map(h=>({...h,anchor:h.id})) : apiHeadingsFlat);`);
     }
     writes['sidebars.js']=sidebar;
-    writes['src/components/editor-interactions.js']=interactionsSource;
-    writes['src/theme/Root/index.jsx']="import React,{useEffect} from 'react';\nimport {installInteractions} from '../../components/editor-interactions';\nexport default function Root({children}){useEffect(()=>installInteractions(document),[]);return <>{children}</>;}\n";
-    // The export pipeline embeds the runtime in standalone documentation too.
-    if(!writes['scripts/export-html.py'].includes('EDITOR_INTERACTIONS'))writes['scripts/export-html.py'] += "\n# EDITOR_INTERACTIONS\noutput = args.output\nwith output.open(encoding='utf-8') as f: published = f.read()\nruntime = (ROOT/'src/components/editor-interactions.js').read_text(encoding='utf-8').replace('export function installInteractions', 'function installInteractions')\noutput.write_text(published.replace('</body>', '<script>' + runtime + '\\ninstallInteractions(document);</script></body>'), encoding='utf-8')\n";
     let sha:string;
     if(c.provider==='github'){
-      sha=await this.commitFiles(ref,writes,'Обновить документацию: '+draft.title,files);
+      const parent=await this.api('/git/commits/'+ref);
+      const blobs=[];
+      for(const [path,content] of Object.entries(writes)){
+        const blob=await this.api('/git/blobs',{method:'POST',body:JSON.stringify({content,encoding:'utf-8'})});
+        blobs.push({path,mode:'100644',type:'blob',sha:blob.sha});
+      }
+      const tree=await this.api('/git/trees',{method:'POST',body:JSON.stringify({base_tree:parent.tree.sha,tree:blobs})});
+      const commit=await this.api('/git/commits',{method:'POST',body:JSON.stringify({message:'Обновить документацию: '+draft.title,tree:tree.sha,parents:[ref]})});
+      await this.api('/git/refs/heads/'+encodeURIComponent(c.branch),{method:'PATCH',body:JSON.stringify({sha:commit.sha,force:false})});sha=commit.sha;
     }else{
       const result=await this.api('/repository/commits',{method:'POST',body:JSON.stringify({branch:c.branch,commit_message:'Обновить документацию: '+draft.title,actions:Object.entries(writes).map(([file_path,content])=>({action:files.get(file_path)?'update':'create',file_path,content,...(files.get(file_path)?{last_commit_id:files.get(file_path)!.sha}:{})}))})});sha=result.id;
     }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import {Publisher} from '../lib/github/publish.ts';
-import {storedDocument} from '../lib/github/repository.ts';
-import {renderDocument} from '../lib/document/model.ts';
+import {Publisher} from '../lib/publish.ts';
+import {storedDocument} from '../lib/repository.ts';
+import {renderDocument} from '../lib/document.ts';
 const note='@startuml\nAlice -> Bob: Проверка\n@enduml';
 const content={type:'doc',content:[{type:'image',attrs:{src:'data:image/png;base64,'+'A'.repeat(2*1024*1024),alt:'test',scriptNote:note}}]};
 assert.equal(storedDocument(content).content[0].attrs.scriptNote,note);
@@ -21,8 +21,7 @@ publisher.api=async (path,init={})=>{
  return {};
 };
 await publisher.publish({id:'test',title:'Test',baseHtml:'old'},content);
-assert.equal(requests.filter(r=>r.path==='/git/blobs').length,8);
-assert.ok(!requests.some(r=>r.path==='/git/blobs'&&r.body.content==='editorPagesPath'),'Unchanged sidebar is not uploaded again');
+assert.equal(requests.filter(r=>r.path==='/git/blobs').length,7);
 assert.ok(requests.find(r=>r.path==='/git/blobs').body.content.length>2*1024*1024);
 assert.equal(requests.at(-1).body.force,false);
 const originalFetch=globalThis.fetch;

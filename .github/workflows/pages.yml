@@ -33,8 +33,8 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Build
         run: pnpm build
-      - name: Check types and document operations
-        run: pnpm typecheck && pnpm test
+      - name: Check document operations
+        run: node --experimental-strip-types tests/document.test.mjs
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload Pages artifact

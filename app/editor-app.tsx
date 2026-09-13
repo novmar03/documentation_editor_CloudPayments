@@ -1,14 +1,14 @@
-import {useEffect,useRef,useState,type CSSProperties} from 'react';
-import './interactive-controls.css';
+import {useCallback,useEffect,useRef,useState,type CSSProperties} from 'react';
 import {EditorContent,useEditor,type Editor} from '@tiptap/react';
-import {Bold,Italic,Underline,AlignLeft,AlignCenter,AlignRight,Link2,Code2,Table2,ImagePlus,Info,TriangleAlert,MousePointer2,Heading,Type,Plus,Undo2,Redo2,Save,Eye,Upload,History,ArrowUp,ArrowDown,ChevronRight,ChevronDown,FileText,GitBranch,Settings2,Download,Check,Loader2,Trash2,List,ListOrdered,ExternalLink,Cloud,CloudOff} from 'lucide-react';
+import {TextSelection,NodeSelection} from '@tiptap/pm/state';
+import {Bold,Italic,Underline,AlignLeft,AlignCenter,AlignRight,Link2,Code2,Table2,ImagePlus,Info,TriangleAlert,MousePointer2,Heading,Type,Plus,Undo2,Redo2,Save,Eye,Upload,History,ArrowUp,ArrowDown,ChevronRight,ChevronDown,FileText,GitBranch,Settings2,Download,Check,Loader2,Trash2,List,ListOrdered,X,PanelLeft,ExternalLink,Cloud,CloudOff} from 'lucide-react';
 import {Button} from '@/components/ui/button';
 import {Input} from '@/components/ui/input';
 import {Label} from '@/components/ui/label';
 import {Select,SelectContent,SelectItem,SelectTrigger,SelectValue} from '@/components/ui/select';
 import {Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription,DialogFooter} from '@/components/ui/dialog';
 import {AlertDialog,AlertDialogContent,AlertDialogHeader,AlertDialogTitle,AlertDialogDescription,AlertDialogFooter,AlertDialogCancel,AlertDialogAction} from '@/components/ui/alert-dialog';
-import {DropdownMenu,DropdownMenuContent,DropdownMenuItem,DropdownMenuTrigger} from '@/components/ui/dropdown-menu';
+import {DropdownMenu,DropdownMenuContent,DropdownMenuItem,DropdownMenuTrigger,DropdownMenuSeparator} from '@/components/ui/dropdown-menu';
 import {Tabs,TabsList,TabsTrigger,TabsContent} from '@/components/ui/tabs';
 import {SidebarProvider,Sidebar,SidebarHeader,SidebarContent,SidebarFooter,SidebarInset,SidebarTrigger} from '@/components/ui/sidebar';
 import {Sheet,SheetContent,SheetHeader,SheetTitle} from '@/components/ui/sheet';
@@ -16,23 +16,18 @@ import {Switch} from '@/components/ui/switch';
 import {Slider} from '@/components/ui/slider';
 import {Toaster} from '@/components/ui/sonner';
 import {toast} from 'sonner';
-import seed from '@/data/seed.json';
+import seed from '@/lib/seed.json';
 import {extensions,languages} from './editor-extensions';
-import {type DocNode,normalizeHeadings,headings,moveSection,renderDocument,safeLink} from '@/lib/document/model.ts';
-import {Repository,type Draft,storedDocument} from '@/lib/github/repository.ts';
-import {cacheDraft,recoverDraft,removeCachedDraft} from '@/lib/storage/recovery.ts';
-import {Publisher} from '@/lib/github/publish.ts';
-import {PageManager} from './page-manager';
-import type {PageChange} from '@/lib/document/page-structure.ts';
-import {installInteractions} from '@/lib/runtime/interactions.js';
-import interactionsSource from '@/lib/runtime/interactions.js?raw';
-import {selectedColumnWidth,setColumnWidth} from '@/lib/document/columns.ts';
-import {toBase64} from '@/lib/github/repository.ts';
+import {DocNode,normalizeHeadings,headings,moveSection,renderDocument,safeLink,textOf} from '@/lib/document';
+import {Repository,RepoConfig,Draft,storedDocument} from '@/lib/repository';
+import {cacheDraft,recoverDraft} from '@/lib/recovery';
+import {Publisher} from '@/lib/publish';
+import {selectedColumnWidth,setColumnWidth} from '@/lib/columns';
+import {toBase64} from '@/lib/repository';
 const EDITOR_REPO='novmar03/documentation_editor_CloudPayments';
 const DOCS_REPO='novmar03/CloudPayments_documentation';
 const DOCS_URL='https://novmar03.github.io/CloudPayments_documentation/';
-let pages=structuredClone(seed.pages) as Record<string,any>;
-let publishedData:any={groups:structuredClone(seed.groups),pages:Object.fromEntries(Object.entries(pages).map(([id,p])=>[id,{...p,html:p.originalHtml}]))};
+const pages=seed.pages as Record<string,any>;
 const errorText=(e:unknown)=>e instanceof Error?e.message:'Не удалось выполнить действие';
 function Choice({value,onChange,options,label}:{value:string;onChange:(v:string)=>void;options:string[][];label:string}){return <Select value={value} onValueChange={onChange}><SelectTrigger className="w-full" aria-label={label}><SelectValue/></SelectTrigger><SelectContent>{options.map(([id,text])=><SelectItem key={id} value={id}>{text}</SelectItem>)}</SelectContent></Select>;}
 function IconButton({label,active,children,onClick,disabled=false}:{label:string;active?:boolean;children:React.ReactNode;onClick:()=>void;disabled?:boolean}){return <Button type="button" size="icon" variant="ghost" title={label} aria-label={label} aria-pressed={active} className={active?'tool-active':''} disabled={disabled} onMouseDown={e=>e.preventDefault()} onClick={onClick}>{children}</Button>;}
@@ -40,23 +35,6 @@ const blank:DocNode={type:'doc',content:[{type:'paragraph'}]};
 type Loaded={id:string;title:string;html?:string;content?:DocNode;draft?:Draft;recovered?:boolean};
 type SaveState='ready'|'dirty'|'saving'|'saved'|'local'|'error';
 export default function EditorApp(){
-  const [groups,setGroups]=useState(publishedData.groups),[manageOpen,setManageOpen]=useState(false);
-  async function refreshCatalog(){
-    const response=await fetch('https://raw.githubusercontent.com/'+DOCS_REPO+'/main/index.html?editor='+Date.now());
-    if(!response.ok)throw new Error('Не удалось загрузить актуальный список страниц');
-    const html=await response.text(),match=html.match(/<script id="document-data" type="application\/json">([\s\S]*?)<\/script>/);
-    if(!match)throw new Error('Не удалось прочитать страницы');
-    setCatalog(JSON.parse(match[1]));
-  }
-  function setCatalog(data:any){publishedData=data;pages=Object.fromEntries(Object.entries(data.pages).map(([id,p]:any)=>[id,{...p,originalHtml:p.html,editorHtml:p.html}]));setGroups(data.groups);}
-  async function manage(ops:PageChange[]){
-    if(!repository)throw new Error('Подключите GitHub');
-    if(!(await saveRef.current()))throw new Error('Сначала сохраните текущий черновик');
-    const pub=new Publisher({provider:'github',project:DOCS_REPO,branch:'main',host:'https://github.com',token:repository.config.token});
-    const result=await pub.managePages(ops,publishedData.groups);setCatalog(result.data);
-    if(loaded&&!pages[loaded.id]){working.current=null;await openPage(Object.keys(pages)[0]);}
-    setActiveTab('pages');toast.success('Структура отправлена на публикацию');
-  }
   const initial=decodeURIComponent(location.hash.slice(1)||'tech/api');
   const [loaded,setLoaded]=useState<Loaded|null>(null),[loading,setLoading]=useState(true),[activeTab,setActiveTab]=useState('outline');
   const [repository,setRepository]=useState<Repository|null>(null),repoRef=useRef<Repository|null>(null);
@@ -68,18 +46,13 @@ export default function EditorApp(){
   const [titles,setTitles]=useState<Record<string,string>>({}),[publication,setPublication]=useState<string|null>(null);
   const working=useRef<Draft|null>(null),dirty=useRef(0),savedCounter=useRef(0),inflight=useRef<Promise<boolean>|null>(null),timer=useRef<ReturnType<typeof setTimeout>|null>(null);
   const currentContent=useRef<DocNode>(blank),latestEditor=useRef<Editor|null>(null);
-  const [deleteDraftOpen,setDeleteDraftOpen]=useState(false),[deletingDraft,setDeletingDraft]=useState(false);
-  const deletingDraftRef=useRef(false);
   const selectedHeading=editor?.state.selection.$from.parent.type.name==='heading'?editor.state.selection.$from.parent.attrs.id:null;
   const outline=editor?headings(editor.getJSON() as DocNode):[];
   async function save(remote=true):Promise<boolean>{
-    if(deletingDraftRef.current)return false;
     if(inflight.current){await inflight.current;if(dirty.current===savedCounter.current)return true;return save(remote);}
     if(!working.current)return true;
-    if(dirty.current===savedCounter.current&&!working.current.commit)return true;
     const snapshot={...working.current,content:currentContent.current,updated:new Date().toISOString()};
     try{await cacheDraft(snapshot);}catch{toast.error('Не удалось сохранить резервную копию на устройстве');}
-    if(deletingDraftRef.current)return false;
     if(!remote||!repoRef.current){setSaveState(dirty.current>savedCounter.current?'local':'ready');return true;}
     if(dirty.current===savedCounter.current&&working.current.commit)return true;
     const generation=dirty.current;setSaveState('saving');setSaveError('');
@@ -92,12 +65,10 @@ export default function EditorApp(){
   }
   const saveRef=useRef(save);saveRef.current=save;
   function changed(doc:DocNode,title?:string){
-    if(deletingDraftRef.current)return;
     if(!working.current)return;currentContent.current=doc;working.current={...working.current,content:doc,...(title!==undefined?{title}:{})};dirty.current++;setSaveState('dirty');setTick(t=>t+1);
     if(timer.current)clearTimeout(timer.current);timer.current=setTimeout(()=>{void saveRef.current();},1800);
   }
   async function openPage(id:string,forceRemote=false){
-    if(deletingDraftRef.current)return;
     if(!pages[id])return;
     if(timer.current)clearTimeout(timer.current);
     if(working.current&&!(await saveRef.current())){toast.error('Сначала сохраните текущие изменения или скачайте HTML');return;}
@@ -116,7 +87,7 @@ export default function EditorApp(){
       window.history.replaceState(null,'','#'+id);
     }catch(e){toast.error(errorText(e));}finally{setLoading(false);}
   }
-  useEffect(()=>{void (async()=>{try{await refreshCatalog();}catch(e){toast.warning(errorText(e));}await openPage(pages[initial]?initial:Object.keys(pages)[0]);})();return()=>{if(timer.current)clearTimeout(timer.current);};},[]);
+  useEffect(()=>{void openPage(pages[initial]?initial:'tech/api');return()=>{if(timer.current)clearTimeout(timer.current);};},[]);
   useEffect(()=>{const handler=(e:BeforeUnloadEvent)=>{if(dirty.current>savedCounter.current){e.preventDefault();e.returnValue='';}};window.addEventListener('beforeunload',handler);return()=>window.removeEventListener('beforeunload',handler);},[]);
   useEffect(()=>{const key=(e:KeyboardEvent)=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();if(repoRef.current)void saveRef.current().then(ok=>{if(ok)toast.success('Черновик сохранён');});else setConnectionOpen(true);}};window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key);},[]);
   useEffect(()=>{const context=(document as any).modelContext;if(!context?.registerTool)return;const lifecycle=new AbortController();
@@ -135,25 +106,6 @@ export default function EditorApp(){
     }catch(e){toast.error(errorText(e));}finally{setConnecting(false);}
   }
   async function showHistory(){if(!repository){setConnectionOpen(true);return;}setHistoryOpen(true);setHistoryLoading(true);try{setHistory(await repository.history(loaded!.id));}catch(e){toast.error(errorText(e));}finally{setHistoryLoading(false);}}
-  async function deleteDraft(){
-    if(!working.current||deletingDraftRef.current)return;
-    const id=working.current.id;
-    deletingDraftRef.current=true;setDeletingDraft(true);
-    latestEditor.current?.setEditable(false);
-    if(timer.current)clearTimeout(timer.current);
-    try{
-      if(inflight.current)await inflight.current;
-      await refreshCatalog();
-      if(repoRef.current)await repoRef.current.remove(id,working.current?.commit);
-      await removeCachedDraft(id);
-      working.current=null;dirty.current=0;savedCounter.current=0;
-      setLoaded(null);setRestoreCandidate(null);setHistory([]);setDeleteDraftOpen(false);
-      deletingDraftRef.current=false;
-      await openPage(pages[id]?id:Object.keys(pages)[0]);
-      toast.success('Черновик удалён. Открыта опубликованная версия.');
-    }catch(e){toast.error(errorText(e));}
-    finally{deletingDraftRef.current=false;setDeletingDraft(false);latestEditor.current?.setEditable(!preview);}
-  }
   async function restore(sha:string){try{const draft=await repository!.revision(loaded!.id,sha);setRestoreCandidate({...draft,content:await repository!.hydrate(draft.content)});}catch(e){toast.error(errorText(e));}}
   function applyRestore(){if(!restoreCandidate||!editor)return;editor.commands.setContent(restoreCandidate.content);working.current!.title=restoreCandidate.title;setLoaded(old=>old?{...old,title:restoreCandidate.title}:old);changed(editor.getJSON() as DocNode,restoreCandidate.title);setRestoreCandidate(null);setHistoryOpen(false);toast.success('Версия восстановлена в черновик');}
   async function publish(){
@@ -167,12 +119,13 @@ export default function EditorApp(){
   function download(){if(!working.current)return;const html='<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+working.current.title.replace(/[<>]/g,'')+'</title><style>'+previewStyles+'</style><body><main><h1>'+working.current.title.replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</h1>'+renderDocument(currentContent.current)+'</main><script>'+copyScript+'</script></body></html>';const url=URL.createObjectURL(new Blob([html],{type:'text/html;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download=working.current.id.replace(/\//g,'-')+'.html';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
   function jump(id:string){if(!editor)return;let pos=0;editor.state.doc.descendants((node,p)=>{if(node.type.name==='heading'&&node.attrs.id===id)pos=p+1;});editor.chain().focus().setTextSelection(pos).run();document.getElementById(id)?.scrollIntoView({block:'center',behavior:'smooth'});setTick(t=>t+1);}
   function shiftHeading(index:number,direction:number){if(!editor)return;const id=editor.state.selection.$from.parent.attrs.id,doc=moveSection(editor.getJSON() as DocNode,index,direction);editor.commands.setContent(doc);if(id)jump(id);}
+  const activeOutline=outline.find(h=>h.id===selectedHeading);
   const statusText={ready:'Исходная страница',dirty:'Есть изменения',saving:'Сохраняем…',saved:'Сохранено в GitHub',local:'Копия на устройстве',error:'Не удалось сохранить'}[saveState];
   const properties=editor?<BlockSettings editor={editor} tick={tick} repository={repository} onConnect={()=>setConnectionOpen(true)}/>:null;
   return <SidebarProvider style={{'--sidebar-width':'300px'} as CSSProperties}>
     <Sidebar className="editor-sidebar"><SidebarHeader className="brand-header"><img src="./cloudpayments-logo.svg" alt="CloudPayments"/><span>Редактор документации</span></SidebarHeader>
       <SidebarContent className="sidebar-body"><Tabs value={activeTab} onValueChange={setActiveTab}><TabsList className="w-full"><TabsTrigger value="pages"><FileText size={15}/>Страницы</TabsTrigger><TabsTrigger value="outline"><List size={15}/>Оглавление</TabsTrigger></TabsList>
-        <TabsContent value="pages"><Button variant="outline" onClick={async()=>{if(!repository){setConnectionOpen(true);return;}try{await refreshCatalog();setManageOpen(true);}catch(e){toast.error(errorText(e));}}}>Управление страницами</Button>{groups.map((g:any)=><details className="page-group" key={g.id} open={g.id===pages[loaded?.id||'tech/api']?.group}><summary>{g.title}</summary><nav>{g.items.map((p:any)=><button type="button" key={p.id} className={p.id===loaded?.id?'page-link active':'page-link'} onClick={()=>void openPage(p.id)}>{titles[p.id]||p.title}</button>)}</nav></details>)}</TabsContent>
+        <TabsContent value="pages">{seed.groups.map(g=><details className="page-group" key={g.id} open={g.id===pages[loaded?.id||'tech/api'].group}><summary>{g.title}</summary><nav>{g.items.map(p=><button type="button" key={p.id} className={p.id===loaded?.id?'page-link active':'page-link'} onClick={()=>void openPage(p.id)}>{titles[p.id]||p.title}</button>)}</nav></details>)}</TabsContent>
         <TabsContent value="outline"><div className="outline-page"><FileText size={17}/><span>{loaded?.title||'API'}</span><span className="level-tag">H1</span></div>{outline.length===0?<div className="outline-empty">Добавьте заголовок — он появится здесь.</div>:<nav className="heading-tree" aria-label="Оглавление страницы">{outline.map((h,i)=>{
           let hidden=false;for(let j=i-1,level=h.level;j>=0;j--){if(outline[j].level<level){level=outline[j].level;if(collapsed.has(outline[j].id)){hidden=true;break;}}}if(hidden)return null;
           const children=!!outline[i+1]&&outline[i+1].level>h.level;
@@ -180,7 +133,7 @@ export default function EditorApp(){
         })}</nav>}</TabsContent></Tabs></SidebarContent>
       <SidebarFooter className="sidebar-bottom"><Button variant="ghost" onClick={()=>setConnectionOpen(true)}><GitBranch size={17}/>{repository?'GitHub подключён':'Подключить GitHub'}{repository&&<Check size={15}/>}</Button><a href={DOCS_URL} target="_blank" rel="noopener noreferrer">Открыть документацию<ExternalLink size={14}/></a></SidebarFooter>
     </Sidebar>
-    <SidebarInset className="editor-inset"><header className="workspace-header"><div className="workspace-heading"><SidebarTrigger/><span>Рабочее пространство</span><ChevronRight size={14}/><strong>{loaded?.title||'Документация'}</strong></div><div className="header-actions"><IconButton label="Удалить черновик страницы" disabled={loading||publishing||deletingDraft||!loaded} onClick={()=>setDeleteDraftOpen(true)}><Trash2 size={18}/></IconButton><IconButton label="История версий" onClick={()=>void showHistory()}><History size={18}/></IconButton><IconButton label="Скачать страницу HTML" onClick={download}><Download size={18}/></IconButton><Button variant="outline" onClick={()=>setPreview(v=>!v)}><Eye size={16}/><span className="optional-label">{preview?'Редактировать':'Предпросмотр'}</span></Button><Button variant="outline" onClick={()=>repository?void saveRef.current().then(ok=>{if(ok)toast.success('Черновик сохранён');}):setConnectionOpen(true)} disabled={saveState==='saving'}>{saveState==='saving'?<Loader2 className="spin" size={16}/>:<Save size={16}/>}<span className="optional-label">Сохранить</span></Button><Button onClick={()=>repository?setPublishOpen(true):setConnectionOpen(true)} disabled={publishing||loading}><Upload size={16}/><span>Опубликовать</span></Button></div></header>
+    <SidebarInset className="editor-inset"><header className="workspace-header"><div className="workspace-heading"><SidebarTrigger/><span>Рабочее пространство</span><ChevronRight size={14}/><strong>{loaded?.title||'Документация'}</strong></div><div className="header-actions"><IconButton label="История версий" onClick={()=>void showHistory()}><History size={18}/></IconButton><IconButton label="Скачать страницу HTML" onClick={download}><Download size={18}/></IconButton><Button variant="outline" onClick={()=>setPreview(v=>!v)}><Eye size={16}/><span className="optional-label">{preview?'Редактировать':'Предпросмотр'}</span></Button><Button variant="outline" onClick={()=>repository?void saveRef.current().then(ok=>{if(ok)toast.success('Черновик сохранён');}):setConnectionOpen(true)} disabled={saveState==='saving'}>{saveState==='saving'?<Loader2 className="spin" size={16}/>:<Save size={16}/>}<span className="optional-label">Сохранить</span></Button><Button onClick={()=>repository?setPublishOpen(true):setConnectionOpen(true)} disabled={publishing||loading}><Upload size={16}/><span>Опубликовать</span></Button></div></header>
       <div className="document-status"><span className={'save-label '+saveState}>{saveState==='saving'?<Loader2 className="spin" size={14}/>:saveState==='saved'?<Cloud size={15}/>:saveState==='error'?<CloudOff size={15}/>:<FileText size={14}/>}<span role="status">{statusText}</span>{saveState==='saved'&&savedAt&&<time>{new Date(savedAt).toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'})}</time>}</span><Button className="mobile-settings" variant="ghost" size="sm" onClick={()=>setSettingsOpen(true)}><Settings2 size={16}/>Настройки</Button></div>
       {saveError&&<div className="error-strip" role="alert">{saveError}<Button variant="outline" size="sm" onClick={()=>void saveRef.current()}>Повторить</Button></div>}
       {publication&&<div className="published-strip"><Check size={16}/>Страница отправлена на публикацию.<a href={DOCS_URL+'#/'+loaded?.id} target="_blank" rel="noopener noreferrer">Открыть сайт</a></div>}
@@ -189,11 +142,9 @@ export default function EditorApp(){
     </SidebarInset>
     <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}><SheetContent><SheetHeader><SheetTitle>Настройки блока</SheetTitle></SheetHeader><div className="p-5">{properties}</div></SheetContent></Sheet>
     <Dialog open={connectionOpen} onOpenChange={v=>{setConnectionOpen(v);if(!v)setToken('');}}><DialogContent className="connection-dialog"><DialogHeader><DialogTitle><GitBranch size={22}/>Подключить GitHub</DialogTitle><DialogDescription>Сохраняйте черновики и публикуйте готовые страницы.</DialogDescription></DialogHeader><div className="connection-repos"><div><span>Редактор и черновики</span><strong>{EDITOR_REPO}</strong></div><div><span>Опубликованная документация</span><strong>{DOCS_REPO}</strong></div></div>{repository?<><p>Подключение действует до закрытия этой страницы.</p><Button variant="outline" onClick={()=>{repoRef.current=null;setRepository(null);setConnectionOpen(false);toast.info('GitHub отключён');}}>Отключить</Button></>:<><ol className="connection-steps"><li><a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">Создайте токен GitHub<ExternalLink size={13}/></a></li><li>Выберите эти два репозитория в <strong>Repository access</strong>.</li><li>Для <strong>Contents</strong> установите <strong>Read and write</strong>.</li></ol><Label htmlFor="github-token">Токен для этого сеанса</Label><Input id="github-token" type="password" autoComplete="off" spellCheck={false} placeholder="github_pat_…" value={token} onChange={e=>setToken(e.target.value)}/><p className="form-help">Токен используется только в текущем окне и не сохраняется в файлах или черновиках.</p><DialogFooter><Button disabled={connecting||!token.trim()} onClick={()=>void connect()}>{connecting?<Loader2 className="spin" size={16}/>:<GitBranch size={16}/>}Подключить</Button></DialogFooter></>}</DialogContent></Dialog>
-    <Dialog open={historyOpen} onOpenChange={setHistoryOpen}><DialogContent><DialogHeader><DialogTitle>История страницы</DialogTitle><DialogDescription>{loaded?.title}. Восстановление создаст новый черновик.</DialogDescription></DialogHeader><div className="history-list">{historyLoading?<Loader2 className="spin"/>:history.length===0?<p>История появится после первого сохранения в GitHub.</p>:history.map(row=><div className="history-row" key={row.sha}><div><strong>{new Date(row.commit.author.date).toLocaleString('ru')}</strong><span>{row.commit.message.split('\n')[0].replace(' [skip ci]','')}</span></div><Button size="sm" variant="outline" disabled={row.commit.message.startsWith("Удалить черновик:")} onClick={()=>void restore(row.sha)}>{row.commit.message.startsWith("Удалить черновик:")?"Черновик удалён":"Восстановить"}</Button></div>)}</div></DialogContent></Dialog>
+    <Dialog open={historyOpen} onOpenChange={setHistoryOpen}><DialogContent><DialogHeader><DialogTitle>История страницы</DialogTitle><DialogDescription>{loaded?.title}. Восстановление создаст новый черновик.</DialogDescription></DialogHeader><div className="history-list">{historyLoading?<Loader2 className="spin"/>:history.length===0?<p>История появится после первого сохранения в GitHub.</p>:history.map(row=><div className="history-row" key={row.sha}><div><strong>{new Date(row.commit.author.date).toLocaleString('ru')}</strong><span>{row.commit.message.split('\n')[0].replace(' [skip ci]','')}</span></div><Button size="sm" variant="outline" onClick={()=>void restore(row.sha)}>Восстановить</Button></div>)}</div></DialogContent></Dialog>
     <AlertDialog open={!!restoreCandidate} onOpenChange={v=>{if(!v)setRestoreCandidate(null);}}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Восстановить эту версию?</AlertDialogTitle><AlertDialogDescription>Содержимое текущего черновика будет заменено. Сохранённые версии останутся в истории.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Отмена</AlertDialogCancel><AlertDialogAction onClick={applyRestore}>Восстановить</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
     <Dialog open={publishOpen} onOpenChange={setPublishOpen}><DialogContent><DialogHeader><DialogTitle>Опубликовать страницу?</DialogTitle><DialogDescription>На сайте документации обновится страница «{loaded?.title}».</DialogDescription></DialogHeader><div className="publish-summary"><FileText size={22}/><div><strong>{loaded?.title}</strong><span>{outline.length} заголовков · {DOCS_REPO}</span></div></div><p>Перед публикацией проверьте страницу в предпросмотре. Редактор сохранит историю и отправит обновление на сайт.</p><DialogFooter><Button variant="outline" onClick={()=>{setPublishOpen(false);setPreview(true);}}>Предпросмотр</Button><Button disabled={publishing} onClick={()=>void publish()}>{publishing?<Loader2 size={16} className="spin"/>:<Upload size={16}/>}Опубликовать</Button></DialogFooter></DialogContent></Dialog>
-    <Dialog open={manageOpen} onOpenChange={setManageOpen}><DialogContent><DialogHeader><DialogTitle>Управление страницами</DialogTitle><DialogDescription>Создание, удаление и порядок страниц документации.</DialogDescription></DialogHeader>{manageOpen&&<PageManager data={publishedData} onPublish={manage} onClose={()=>setManageOpen(false)}/>}</DialogContent></Dialog>
-    <AlertDialog open={deleteDraftOpen} onOpenChange={v=>{if(!deletingDraft)setDeleteDraftOpen(v);}}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Удалить черновик «{loaded?.title}»?</AlertDialogTitle><AlertDialogDescription>{repository?'Будут удалены текущий черновик в GitHub и копия на этом устройстве. История GitHub сохранится.':'Будет удалена только копия на этом устройстве. Для удаления черновика в GitHub сначала подключитесь.'} Несохранённые правки будут отброшены. Опубликованная страница останется на сайте.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={deletingDraft}>Отмена</AlertDialogCancel><Button disabled={deletingDraft} onClick={()=>void deleteDraft()}>{deletingDraft?'Удаляем…':'Удалить черновик'}</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
     <Toaster theme="light" richColors position="bottom-right"/>
   </SidebarProvider>;
 }
@@ -205,19 +156,16 @@ function DocumentWorkspace({loaded,preview,onEditor,onSelection,onReady,onChange
   useEffect(()=>{editor?.setEditable(!preview);},[editor,preview]);
   if(!editor)return <div className="loading-page"><Loader2 className="spin"/></div>;
   const paragraph=editor.isActive('heading')?'h'+editor.getAttributes('heading').level:'paragraph';
-  return <><div className="document-heading"><div className="page-eyebrow">{seed.groups.find(g=>g.id===pages[loaded.id]?.group)?.title}</div>{preview?<h1>{loaded.title}</h1>:<input className="page-title-input" aria-label="Название страницы H1" value={loaded.title} onChange={e=>onTitle(e.target.value)} placeholder="Название страницы"/>}</div>{!preview&&<div className="format-toolbar"><div className="format-type"><Choice label="Тип текста" value={paragraph} onChange={value=>value==='paragraph'?editor.chain().focus().setParagraph().run():editor.chain().focus().setHeading({level:Number(value.slice(1)) as any}).run()} options={[['paragraph','Обычный текст'],...[2,3,4,5,6].map(n=>['h'+n,'Заголовок H'+n])]}/></div><span className="toolbar-divider"/><IconButton label="Жирный" active={editor.isActive('bold')} onClick={()=>editor.chain().focus().toggleBold().run()}><Bold size={17}/></IconButton><IconButton label="Курсив" active={editor.isActive('italic')} onClick={()=>editor.chain().focus().toggleItalic().run()}><Italic size={17}/></IconButton><IconButton label="Подчёркнутый" active={editor.isActive('underline')} onClick={()=>editor.chain().focus().toggleUnderline().run()}><Underline size={17}/></IconButton><IconButton label="Ссылка" active={editor.isActive('link')} onClick={()=>{setLink(editor.getAttributes('link').href||'');setLinkOpen(true);}}><Link2 size={17}/></IconButton><span className="toolbar-divider"/>{[['left',AlignLeft,'По левому краю'],['center',AlignCenter,'По центру'],['right',AlignRight,'По правому краю']].map(([value,Icon,label])=><IconButton key={value as string} label={label as string} active={editor.isActive({textAlign:value})} onClick={()=>editor.chain().focus().setTextAlign(value as string).run()}>{typeof Icon!=='string'&&<Icon size={17}/>}</IconButton>)}<IconButton label="Маркированный список" active={editor.isActive('bulletList')} onClick={()=>editor.chain().focus().toggleBulletList().run()}><List size={17}/></IconButton><IconButton label="Нумерованный список" active={editor.isActive('orderedList')} onClick={()=>editor.chain().focus().toggleOrderedList().run()}><ListOrdered size={17}/></IconButton><span className="toolbar-divider"/><IconButton label="Отменить" disabled={!editor.can().undo()} onClick={()=>editor.chain().focus().undo().run()}><Undo2 size={17}/></IconButton><IconButton label="Повторить" disabled={!editor.can().redo()} onClick={()=>editor.chain().focus().redo().run()}><Redo2 size={17}/></IconButton><InsertMenu editor={editor}/></div>}
-    {preview?<InteractivePreview html={renderDocument(editor.getJSON() as DocNode)}/>:<EditorContent editor={editor}/>}
+  return <><div className="document-heading"><div className="page-eyebrow">{seed.groups.find(g=>g.id===pages[loaded.id].group)?.title}</div>{preview?<h1>{loaded.title}</h1>:<input className="page-title-input" aria-label="Название страницы H1" value={loaded.title} onChange={e=>onTitle(e.target.value)} placeholder="Название страницы"/>}</div>{!preview&&<div className="format-toolbar"><div className="format-type"><Choice label="Тип текста" value={paragraph} onChange={value=>value==='paragraph'?editor.chain().focus().setParagraph().run():editor.chain().focus().setHeading({level:Number(value.slice(1)) as any}).run()} options={[['paragraph','Обычный текст'],...[2,3,4,5,6].map(n=>['h'+n,'Заголовок H'+n])]}/></div><span className="toolbar-divider"/><IconButton label="Жирный" active={editor.isActive('bold')} onClick={()=>editor.chain().focus().toggleBold().run()}><Bold size={17}/></IconButton><IconButton label="Курсив" active={editor.isActive('italic')} onClick={()=>editor.chain().focus().toggleItalic().run()}><Italic size={17}/></IconButton><IconButton label="Подчёркнутый" active={editor.isActive('underline')} onClick={()=>editor.chain().focus().toggleUnderline().run()}><Underline size={17}/></IconButton><IconButton label="Ссылка" active={editor.isActive('link')} onClick={()=>{setLink(editor.getAttributes('link').href||'');setLinkOpen(true);}}><Link2 size={17}/></IconButton><span className="toolbar-divider"/>{[['left',AlignLeft,'По левому краю'],['center',AlignCenter,'По центру'],['right',AlignRight,'По правому краю']].map(([value,Icon,label])=><IconButton key={value as string} label={label as string} active={editor.isActive({textAlign:value})} onClick={()=>editor.chain().focus().setTextAlign(value as string).run()}>{typeof Icon!=='string'&&<Icon size={17}/>}</IconButton>)}<IconButton label="Маркированный список" active={editor.isActive('bulletList')} onClick={()=>editor.chain().focus().toggleBulletList().run()}><List size={17}/></IconButton><IconButton label="Нумерованный список" active={editor.isActive('orderedList')} onClick={()=>editor.chain().focus().toggleOrderedList().run()}><ListOrdered size={17}/></IconButton><span className="toolbar-divider"/><IconButton label="Отменить" disabled={!editor.can().undo()} onClick={()=>editor.chain().focus().undo().run()}><Undo2 size={17}/></IconButton><IconButton label="Повторить" disabled={!editor.can().redo()} onClick={()=>editor.chain().focus().redo().run()}><Redo2 size={17}/></IconButton><InsertMenu editor={editor}/></div>}
+    {preview?<div className="document-preview" onClick={handlePreviewCopy} dangerouslySetInnerHTML={{__html:renderDocument(editor.getJSON() as DocNode)}}/>:<EditorContent editor={editor}/>}
     {!preview&&<div className="insert-bottom"><InsertMenu editor={editor} bottom/><span>Текст, код, таблица, уведомление или изображение</span></div>}
-    <Dialog open={linkOpen} onOpenChange={setLinkOpen}><DialogContent><DialogHeader><DialogTitle>Ссылка в тексте</DialogTitle><DialogDescription>Выделите текст и укажите адрес страницы или #имя-якоря. Для другой страницы используйте её полный адрес с #имя-якоря.</DialogDescription></DialogHeader><Input aria-label="Адрес ссылки" value={link} onChange={e=>setLink(e.target.value)} placeholder="https://"/><DialogFooter><Button variant="outline" onClick={()=>{editor.chain().focus().extendMarkRange('link').unsetLink().run();setLinkOpen(false);}}>Удалить ссылку</Button><Button onClick={()=>{const href=safeLink(link);if(!href){toast.error('Введите корректную ссылку');return;}if(editor.state.selection.empty&&!editor.isActive('link'))editor.chain().focus().insertContent({type:'text',text:href,marks:[{type:'link',attrs:{href}}]}).run();else editor.chain().focus().extendMarkRange('link').setLink({href}).run();setLinkOpen(false);}}>Применить</Button></DialogFooter></DialogContent></Dialog>
+    <Dialog open={linkOpen} onOpenChange={setLinkOpen}><DialogContent><DialogHeader><DialogTitle>Ссылка в тексте</DialogTitle><DialogDescription>Выделите текст и укажите адрес страницы.</DialogDescription></DialogHeader><Input aria-label="Адрес ссылки" value={link} onChange={e=>setLink(e.target.value)} placeholder="https://"/><DialogFooter><Button variant="outline" onClick={()=>{editor.chain().focus().extendMarkRange('link').unsetLink().run();setLinkOpen(false);}}>Удалить ссылку</Button><Button onClick={()=>{const href=safeLink(link);if(!href){toast.error('Введите корректную ссылку');return;}if(editor.state.selection.empty&&!editor.isActive('link'))editor.chain().focus().insertContent({type:'text',text:href,marks:[{type:'link',attrs:{href}}]}).run();else editor.chain().focus().extendMarkRange('link').setLink({href}).run();setLinkOpen(false);}}>Применить</Button></DialogFooter></DialogContent></Dialog>
   </>;
 }
-function InteractivePreview({html}:{html:string}){const ref=useRef<HTMLDivElement>(null);useEffect(()=>ref.current?installInteractions(ref.current):undefined,[html]);return <div ref={ref} className="document-preview" onClick={handlePreviewCopy} dangerouslySetInnerHTML={{__html:html}}/>;}
 function InsertMenu({editor,bottom=false}:{editor:Editor;bottom?:boolean}){
-  const items=[['text','Текст',Type],['heading','Заголовок',Heading],['code','Код',Code2],['info','Информация',Info],['attention','Внимание',TriangleAlert],['table','Таблица',Table2],['image','Фото / GIF',ImagePlus],['anchor','Якорь',Link2],['carousel','Карусель',ImagePlus],['button','Кнопка со ссылкой',MousePointer2]] as const;
+  const items=[['text','Текст',Type],['heading','Заголовок',Heading],['code','Код',Code2],['info','Информация',Info],['attention','Внимание',TriangleAlert],['table','Таблица',Table2],['image','Фото / GIF',ImagePlus],['button','Кнопка со ссылкой',MousePointer2]] as const;
   function insert(type:string){
     let node:any={type:'paragraph'};
-    if(type==='anchor'){const id='anchor-'+crypto.randomUUID().slice(0,8);editor.chain().focus().insertContent({type:'anchor',attrs:{id}}).run();return;}
-    if(type==='carousel')node={type:'carousel',attrs:{slides:[]}};
     if(type==='heading')node={type:'heading',attrs:{level:2,id:'section-'+crypto.randomUUID()},content:[{type:'text',text:'Новый заголовок'}]};
     if(type==='code')node={type:'codeBlock',attrs:{language:'javascript'},content:[{type:'text',text:'// Вставьте пример кода'}]};
     if(type==='info'||type==='attention')node={type:'callout',attrs:{kind:type},content:[{type:'paragraph',content:[{type:'text',text:type==='info'?'Полезная информация':'На что обратить внимание'}]}]};
@@ -225,8 +173,7 @@ function InsertMenu({editor,bottom=false}:{editor:Editor;bottom?:boolean}){
     if(type==='image'){window.dispatchEvent(new CustomEvent('editor-upload-image'));return;}
     if(type==='table'){editor.chain().focus().insertTable({rows:3,cols:3,withHeaderRow:true}).run();return;}
     const {$from}=editor.state.selection;const pos=bottom?editor.state.doc.content.size:$from.after(1);
-    if(type==='carousel')editor.chain().focus().insertContentAt(pos,node).setNodeSelection(pos).run();
-    else editor.chain().focus().insertContentAt(pos,node).setTextSelection(pos+1).run();
+    editor.chain().focus().insertContentAt(pos,node).setTextSelection(pos+1).run();
   }
   return <DropdownMenu><DropdownMenuTrigger asChild><Button variant={bottom?'outline':'ghost'} className="insert-trigger"><Plus size={17}/>{bottom?'Добавить блок':'Блок'}</Button></DropdownMenuTrigger><DropdownMenuContent align="end" className="insert-menu">{items.map(([id,title,Icon])=><DropdownMenuItem key={id} onSelect={()=>insert(id)}><Icon size={17}/>{title}</DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu>;
 }
@@ -239,10 +186,8 @@ function BlockSettings({editor,tick,repository,onConnect}:{editor:Editor;tick:nu
   useEffect(()=>{const onUpload=()=>{fileRef.current?.click();};window.addEventListener('editor-upload-image',onUpload);return()=>window.removeEventListener('editor-upload-image',onUpload);},[repository]);
   const update=(name:string,value:any)=>editor.commands.updateAttributes(selectedType,{[name]:value});
   async function upload(file?:File){if(!file)return;setUploading(true);try{if(!['image/png','image/jpeg','image/webp','image/gif'].includes(file.type))throw new Error('Выберите PNG, JPG, WebP или GIF');if(file.size>5*1024*1024)throw new Error('Максимальный размер — 5 МБ');const attrs=repository?await repository.upload(file):{src:`data:${file.type};base64,${toBase64(new Uint8Array(await file.arrayBuffer()))}`,alt:file.name};editor.chain().focus().setImage(attrs as any).run();toast.success('Изображение добавлено');}catch(e){toast.error(errorText(e));}finally{setUploading(false);if(fileRef.current)fileRef.current.value='';}}
-  const title=({paragraph:'Текст',heading:'Заголовок',codeBlock:'Код',callout:'Уведомление',table:'Таблица',docButton:'Кнопка',image:'Изображение',anchor:'Якорь',carousel:'Карусель'} as Record<string,string>)[selectedType]||'Текст';
+  const title=({paragraph:'Текст',heading:'Заголовок',codeBlock:'Код',callout:'Уведомление',table:'Таблица',docButton:'Кнопка',image:'Изображение'} as Record<string,string>)[selectedType]||'Текст';
   return <div className="block-settings"><div className="block-type-label">{title}</div><input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={e=>void upload(e.target.files?.[0])}/>
-    {selectedType==='anchor'&&<><Field label="Имя якоря" value={attrs.id||''} onChange={v=>update('id',v.replace(/^#/,''))}/><p className="form-help">Буквы, цифры, дефис и подчёркивание. Имя должно быть уникальным на странице. Для ссылки укажите #{attrs.id}.</p><Button variant="outline" onClick={async()=>{try{await navigator.clipboard.writeText('#'+attrs.id);toast.success('Ссылка скопирована');}catch{toast.error('Не удалось скопировать');}}}>Скопировать ссылку</Button></>}
-    {selectedType==='carousel'&&<p>Добавляйте и переставляйте фотографии прямо в блоке карусели.</p>}
     {selectedType==='codeBlock'&&<><Label>Язык кода</Label><Choice label="Язык кода" value={attrs.language||'text'} onChange={v=>update('language',v)} options={languages}/><p className="form-help">Подсветка и копирование сохранятся на опубликованной странице.</p></>}
     {selectedType==='heading'&&<><p className="form-help">Уровень и порядок раздела можно изменить в оглавлении слева.</p><Label>Якорь раздела</Label><code className="anchor-value">#{attrs.id}</code></>}
     {selectedType==='callout'&&<><Label>Тип блока</Label><Choice label="Тип уведомления" value={attrs.kind||'info'} onChange={v=>update('kind',v)} options={[['info','Информация'],['attention','Внимание']]}/></>}
@@ -259,5 +204,5 @@ function BlockSettings({editor,tick,repository,onConnect}:{editor:Editor;tick:nu
 function Field({label,value,onChange,placeholder}:{label:string;value:string;onChange:(s:string)=>void;placeholder?:string}){return <label className="property-field"><span>{label}</span><Input value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder}/></label>;}
 function NumberField({label,value,min,max,onChange}:{label:string;value:number;min:number;max:number;onChange:(n:number)=>void}){const [input,setInput]=useState(String(value));useEffect(()=>setInput(String(value)),[value]);return <label className="property-field"><span>{label}</span><Input type="number" value={input} min={min} max={max} onChange={e=>setInput(e.target.value)} onBlur={()=>onChange(Math.min(max,Math.max(min,Number(input)||min)))}/></label>;}
 async function handlePreviewCopy(e:React.MouseEvent){const button=(e.target as Element).closest('[data-copy-code]') as HTMLElement|null;if(!button)return;const code=button.closest('.api-code-block')?.querySelector('code');if(!code)return;try{await navigator.clipboard.writeText(code.textContent||'');button.dataset.copyState='copied';setTimeout(()=>button.dataset.copyState='ready',1800);}catch{toast.error('Не удалось скопировать код');}}
-const copyScript=interactionsSource.replace('export function installInteractions','function installInteractions')+'\ninstallInteractions(document);\n'+`document.addEventListener('click',async function(e){var b=e.target.closest('[data-copy-code]');if(!b)return;try{await navigator.clipboard.writeText(b.closest('.api-code-block').querySelector('code').textContent);b.dataset.copyState='copied';setTimeout(()=>b.dataset.copyState='ready',1800)}catch{}});`;
+const copyScript=`document.addEventListener('click',async function(e){var b=e.target.closest('[data-copy-code]');if(!b)return;try{await navigator.clipboard.writeText(b.closest('.api-code-block').querySelector('code').textContent);b.dataset.copyState='copied';setTimeout(()=>b.dataset.copyState='ready',1800)}catch{}});`;
 const previewStyles=`*{box-sizing:border-box}body{margin:0;color:#27384f;background:white;font:16px/1.7 system-ui,sans-serif}main{max-width:1060px;margin:auto;padding:32px}h1{font-size:36px}h2,h3,h4,h5,h6{color:#12233b;margin:32px 0 16px}a{color:#1464da}p{margin:0 0 16px}img{max-width:100%}.api-callout{padding:18px 22px;border-left:4px solid #4e89d7;background:#f0f6ff;border-radius:8px;margin:22px 0}.warning{border-color:#c58a14;background:#fff8e7}.api-table-scroll{overflow:auto;max-width:100%;margin:24px 0}table{width:100%;min-width:680px;border-collapse:collapse;font-size:14px}th,td{padding:12px 14px;border:1px solid #dfe6f0;text-align:left;vertical-align:top;word-break:normal;overflow-wrap:normal}th{background:#f2f5fa;white-space:nowrap}.api-code-block{border:1px solid #dfe6f0;border-radius:8px;overflow:hidden;margin:20px 0}.api-code-toolbar{display:flex;justify-content:space-between;background:#edf2f8;padding:8px 14px;font-size:12px}.api-code-toolbar button{border:0;background:transparent;color:#718198;cursor:pointer}.api-copy-success{display:none}[data-copy-state=copied] .api-copy-icon{display:none}[data-copy-state=copied] .api-copy-success{display:block}.api-copy-status{display:none}pre{overflow:auto;background:#f5f7fb;padding:20px;margin:0;font:14px/1.6 monospace;white-space:pre}figure{margin:20px 0}blockquote{border-left:3px solid #b5c8e4;margin-left:0;padding-left:20px}@media(max-width:600px){main{padding:20px}}`;
