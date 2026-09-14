@@ -6,6 +6,7 @@ export const slug=(text:string)=>text.toLowerCase().replace(/[^\p{L}\p{N}_\s-]/g
 export function safeLink(value:unknown,image=false):string {
   const s=String(value||'').trim();
   if(image&&/^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/.test(s))return s;
+  if(image&&/^static\/img\/editor\/[a-f0-9]{64}\.(png|jpg|gif|webp)$/.test(s))return s;
   if((s.startsWith('/')&&!s.startsWith('//'))||s.startsWith('#'))return s;
   try{const u=new URL(s);if((image?['http:','https:']:['http:','https:','mailto:','tel:']).includes(u.protocol))return u.href;}catch{}
   return '';

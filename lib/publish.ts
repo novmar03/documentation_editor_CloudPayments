@@ -1,5 +1,6 @@
 import {DocNode,renderDocument,headings,normalizeHeadings} from './document';
 import {Draft,decodeText} from './repository';
+import {preparePublishedDocument,normalizePublishedImages} from './image-assets';
 export type PublishConfig={provider:'github'|'gitlab';project:string;branch:string;host:string;token:string};
 type RepoFile={content:string;sha:string};
 export class Publisher {
@@ -29,8 +30,9 @@ export class Publisher {
     const match=index.content.match(marker);if(!match)throw new Error('Этот репозиторий не содержит ожидаемую структуру документации');
     const data=JSON.parse(match[1]);if(!data.pages?.[draft.id])throw new Error('Страница отсутствует в документации');
     const currentHtml=data.pages[draft.id].html;
-    if(currentHtml!==(draft.publishedHtml||draft.baseHtml))throw new Error('На сайте есть изменения, сделанные вне редактора. Публикация остановлена, чтобы сохранить их. Скачайте HTML с вашими правками и согласуйте обновление страницы.');
-    const doc=normalizeHeadings(content),html=renderDocument(doc),toc=headings(doc).map(({id,title,level})=>({id,title,level}));
+    if(await normalizePublishedImages(currentHtml)!==await normalizePublishedImages(draft.publishedHtml||draft.baseHtml))throw new Error('На сайте есть изменения, сделанные вне редактора. Публикация остановлена, чтобы сохранить их. Скачайте HTML с вашими правками и согласуйте обновление страницы.');
+    const {doc,assets}=await preparePublishedDocument(normalizeHeadings(content));
+    const html=renderDocument(doc),toc=headings(doc).map(({id,title,level})=>({id,title,level}));
     data.pages[draft.id]={...data.pages[draft.id],title:draft.title,html,toc};
     data.groups.forEach((g:any)=>g.items.forEach((p:any)=>{if(p.id===draft.id)p.title=draft.title;}));
     const writes:Record<string,string>={};
@@ -65,10 +67,26 @@ export class Publisher {
       sidebar=sidebar.replace(line,`const editorPagesPath = path.join(__dirname, 'src/content/editor-pages.json');\nconst editorPages = fs.existsSync(editorPagesPath) ? JSON.parse(fs.readFileSync(editorPagesPath,'utf8')) : {};\nconst apiHeadings = makeApiOutline(editorPages['tech/api'] ? editorPages['tech/api'].toc.map(h=>({...h,anchor:h.id})) : apiHeadingsFlat);`);
     }
     writes['sidebars.js']=sidebar;
+    // Preserve the site's render loader and interactions while adding image routing.
+    const editedSection=files.get('src/components/EditedSection.jsx')?.content;
+    if(editedSection){
+      writes['src/components/EditedSection.jsx']=editedSection;
+      if(!editedSection.includes("base+'img/editor/'")){
+        const point="(content[page]?.segments[index]||'')";
+        if(!editedSection.includes(point))throw new Error('Компонент документации изменился. Нужна проверка совместимости изображений.');
+        writes['src/components/EditedSection.jsx']=editedSection.replace(point,point+`.replaceAll('src="static/img/editor/', 'src="'+base+'img/editor/')`);
+      }
+    }else{
+      writes['src/components/EditedSection.jsx']=writes['src/components/EditedSection.jsx'].replace("(content[page]?.segments[index]||'')","(content[page]?.segments[index]||'').replaceAll('src=\"static/img/editor/', 'src=\"'+base+'img/editor/')");
+    }
     let sha:string;
     if(c.provider==='github'){
       const parent=await this.api('/git/commits/'+ref);
       const blobs=[];
+      for(const asset of assets.values()){
+        const blob=await this.api('/git/blobs',{method:'POST',body:JSON.stringify({content:asset.content,encoding:asset.encoding})});
+        blobs.push({path:asset.path,mode:'100644',type:'blob',sha:blob.sha});
+      }
       for(const [path,content] of Object.entries(writes)){
         const blob=await this.api('/git/blobs',{method:'POST',body:JSON.stringify({content,encoding:'utf-8'})});
         blobs.push({path,mode:'100644',type:'blob',sha:blob.sha});
@@ -77,7 +95,12 @@ export class Publisher {
       const commit=await this.api('/git/commits',{method:'POST',body:JSON.stringify({message:'Обновить документацию: '+draft.title,tree:tree.sha,parents:[ref]})});
       await this.api('/git/refs/heads/'+encodeURIComponent(c.branch),{method:'PATCH',body:JSON.stringify({sha:commit.sha,force:false})});sha=commit.sha;
     }else{
-      const result=await this.api('/repository/commits',{method:'POST',body:JSON.stringify({branch:c.branch,commit_message:'Обновить документацию: '+draft.title,actions:Object.entries(writes).map(([file_path,content])=>({action:files.get(file_path)?'update':'create',file_path,content,...(files.get(file_path)?{last_commit_id:files.get(file_path)!.sha}:{})}))})});sha=result.id;
+      const imageActions=[];
+      for(const asset of assets.values()){
+        const existing=await this.file(asset.path,ref);
+        if(!existing)imageActions.push({action:'create',file_path:asset.path,content:asset.content,encoding:asset.encoding});
+      }
+      const result=await this.api('/repository/commits',{method:'POST',body:JSON.stringify({branch:c.branch,commit_message:'Обновить документацию: '+draft.title,actions:[...imageActions,...Object.entries(writes).map(([file_path,content])=>({action:files.get(file_path)?'update':'create',file_path,content,...(files.get(file_path)?{last_commit_id:files.get(file_path)!.sha}:{})}))]})});sha=result.id;
     }
     return {sha,html};
   }
