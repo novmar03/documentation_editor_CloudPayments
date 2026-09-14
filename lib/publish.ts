@@ -23,33 +23,37 @@ export class Publisher {
     if(!/^[\w.-]+(?:\/[\w.-]+)+$/.test(c.project))throw new Error('Укажите репозиторий документации');
     const head=c.provider==='github'?await this.api('/git/ref/heads/'+encodeURIComponent(c.branch)):await this.api('/repository/branches/'+encodeURIComponent(c.branch));
     const ref=c.provider==='github'?head.object.sha:head.commit.id;
-    const paths=['index.html','src/components/navigation.json','src/content/editor-pages.json','src/components/EditedSection.jsx','scripts/export-html.py','sidebars.js','docs/'+draft.id+'.md'];
+    const english=draft.locale==='en';
+    const overlayPath='src/content/editor-pages'+(english?'.en':'')+'.json';
+    const docPath=(english?'i18n/en/docusaurus-plugin-content-docs/current/':'docs/')+draft.id+'.md';
+    const paths=['index.html','src/components/navigation.json',overlayPath,'src/components/EditedSection.jsx','scripts/export-html.py','sidebars.js',docPath];
     const loaded=await Promise.all(paths.map(p=>this.file(p,ref)));const files=new Map(paths.map((p,i)=>[p,loaded[i]]));
     const index=files.get('index.html');if(!index)throw new Error('В репозитории нет index.html вашей документации');
     const marker=/<script id="document-data" type="application\/json">([\s\S]*?)<\/script>/;
     const match=index.content.match(marker);if(!match)throw new Error('Этот репозиторий не содержит ожидаемую структуру документации');
     const data=JSON.parse(match[1]);if(!data.pages?.[draft.id])throw new Error('Страница отсутствует в документации');
-    const currentHtml=data.pages[draft.id].html;
+    const localePages=english?((data.translations??={}).en??={pages:{}}).pages:data.pages;
+    const currentHtml=localePages[draft.id]?.html||'';
     if(await normalizePublishedImages(currentHtml)!==await normalizePublishedImages(draft.publishedHtml||draft.baseHtml))throw new Error('На сайте есть изменения, сделанные вне редактора. Публикация остановлена, чтобы сохранить их. Скачайте HTML с вашими правками и согласуйте обновление страницы.');
     const {doc,assets}=await preparePublishedDocument(normalizeHeadings(content));
     const html=renderDocument(doc),toc=headings(doc).map(({id,title,level})=>({id,title,level}));
-    data.pages[draft.id]={...data.pages[draft.id],title:draft.title,html,toc};
-    data.groups.forEach((g:any)=>g.items.forEach((p:any)=>{if(p.id===draft.id)p.title=draft.title;}));
+    localePages[draft.id]={...data.pages[draft.id],title:draft.title,html,toc};
+    if(!english)data.groups.forEach((g:any)=>g.items.forEach((p:any)=>{if(p.id===draft.id)p.title=draft.title;}));
     const writes:Record<string,string>={};
     writes['index.html']=index.content.replace(marker,()=>'<script id="document-data" type="application/json">'+JSON.stringify(data).replace(/</g,'\\u003c')+'</script>');
-    writes['src/components/navigation.json']=JSON.stringify(data.groups,null,2)+'\n';
-    const overlay=JSON.parse(files.get('src/content/editor-pages.json')?.content||'{}');
+    if(!english)writes['src/components/navigation.json']=JSON.stringify(data.groups,null,2)+'\n';
+    const overlay=JSON.parse(files.get(overlayPath)?.content||'{}');
     const inner=html.replace(/^<div class="imported-api">/,'').replace(/<\/div>$/,'');
     const matches=[...inner.matchAll(/<h([2-6])\b[^>]*>[\s\S]*?<\/h\1>/g)];
     const segments=[inner.slice(0,matches[0]?.index??inner.length),...matches.map((m,i)=>inner.slice(m.index!+m[0].length,matches[i+1]?.index??inner.length))];
     overlay[draft.id]={title:draft.title,html,toc,segments,content:doc};
-    writes['src/content/editor-pages.json']=JSON.stringify(overlay,null,2)+'\n';
+    writes[overlayPath]=JSON.stringify(overlay,null,2)+'\n';
     writes['src/components/EditedSection.jsx']=`import React from 'react';\nimport useBaseUrl from '@docusaurus/useBaseUrl';\nimport content from '../content/editor-pages.json';\nimport {handleCodeCopy} from './document-ui';\nexport default function EditedSection({page,index}) {\n const base=useBaseUrl('/');\n const html=(content[page]?.segments[index]||'').replace(/href="#\\/([^"@]+)(?:@([^"\\s]+))?"/g,(_,route,anchor)=>'href="'+base+route+'/'+(anchor?'#'+anchor:'')+'"');\n return <div className="imported-api" onClick={handleCodeCopy} dangerouslySetInnerHTML={{__html:html}}/>;\n}\n`;
-    const existingDoc=files.get('docs/'+draft.id+'.md')?.content||'---\n---\n';
+    const existingDoc=files.get(docPath)?.content||'---\n---\n';
     let front=existingDoc.match(/^---\r?\n[\s\S]*?\r?\n---/)?.[0]||'---\n---';
     front=front.replace(/^title:.*\n/m,'');front=front.replace(/^---\n/,'---\ntitle: '+JSON.stringify(draft.title)+'\n');
     const markdownEscape=(s:string)=>s.replace(/([\\`*{}\[\]<>])/g,'\\$1').replace(/\n/g,' ');
-    writes['docs/'+draft.id+'.md']=front+'\n\nimport EditedSection from \'@site/src/components/EditedSection\';\n\n<EditedSection page="'+draft.id+'" index={0} />\n\n'+toc.map((h,i)=>'#'.repeat(h.level)+' '+markdownEscape(h.title)+' {#'+h.id+'}\n\n<EditedSection page="'+draft.id+'" index={'+(i+1)+'} />\n').join('\n');
+    writes[docPath]=front+'\n\nimport EditedSection from \'@site/src/components/EditedSection\';\n\n<EditedSection page="'+draft.id+'" index={0} />\n\n'+toc.map((h,i)=>'#'.repeat(h.level)+' '+markdownEscape(h.title)+' {#'+h.id+'}\n\n<EditedSection page="'+draft.id+'" index={'+(i+1)+'} />\n').join('\n');
     let exporter=files.get('scripts/export-html.py')?.content;
     if(!exporter)throw new Error('Не найден файл сборки документации');
     if(!exporter.includes('EDITOR_PAGES_FILE')){
@@ -66,7 +70,7 @@ export class Publisher {
       if(!sidebar.includes(line))throw new Error('Навигация изменилась. Нужна проверка совместимости.');
       sidebar=sidebar.replace(line,`const editorPagesPath = path.join(__dirname, 'src/content/editor-pages.json');\nconst editorPages = fs.existsSync(editorPagesPath) ? JSON.parse(fs.readFileSync(editorPagesPath,'utf8')) : {};\nconst apiHeadings = makeApiOutline(editorPages['tech/api'] ? editorPages['tech/api'].toc.map(h=>({...h,anchor:h.id})) : apiHeadingsFlat);`);
     }
-    writes['sidebars.js']=sidebar;
+    if(!english)writes['sidebars.js']=sidebar;
     // Preserve the site's render loader and interactions while adding image routing.
     const editedSection=files.get('src/components/EditedSection.jsx')?.content;
     if(editedSection){

@@ -1,7 +1,8 @@
 import {DocNode} from './document';
+import type {Locale} from './locales';
 export type RepoConfig={project:string;defaultBranch:string;token:string};
 export const DRAFT_BRANCH='documentation-drafts';
-export type Draft={id:string;title:string;content:DocNode;updated:string;baseHtml:string;publishedHtml?:string;commit?:string};
+export type Draft={id:string;locale?:Locale;title:string;content:DocNode;updated:string;baseHtml:string;publishedHtml?:string;commit?:string};
 export const toBase64=(bytes:Uint8Array)=>{let s='';for(let i=0;i<bytes.length;i+=32768)s+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(s);};
 export const fromBase64=(s:string)=>Uint8Array.from(atob(s.replace(/\s/g,'')),c=>c.charCodeAt(0));
 export const encodeText=(s:string)=>toBase64(new TextEncoder().encode(s));
@@ -22,12 +23,12 @@ export class Repository {
   }
   async connect(){const project=await this.request('');this.config.defaultBranch=project.default_branch||this.config.defaultBranch||'main';if(project.permissions?.push===false)throw new Error('Для сохранения нужен доступ на запись в репозиторий');return project;}
   async ensureBranch(){if(this.ready)return;try{await this.request('/git/ref/heads/'+DRAFT_BRANCH);}catch(e){if((e as any).status!==404)throw e;const head=await this.request('/git/ref/heads/'+encodeURIComponent(this.config.defaultBranch));try{await this.request('/git/refs',{method:'POST',body:JSON.stringify({ref:'refs/heads/'+DRAFT_BRANCH,sha:head.object.sha})});}catch(err){if((err as any).status!==422)throw err;await this.request('/git/ref/heads/'+DRAFT_BRANCH);}}this.ready=true;}
-  draftPath(id:string){return 'editor-data/pages/'+id+'.json';}
+  draftPath(id:string,locale:Locale='ru'){return 'editor-data/'+(locale==='en'?'en/':'')+'pages/'+id+'.json';}
   async file(path:string,ref=DRAFT_BRANCH){const f=await this.request('/contents/'+path+'?ref='+encodeURIComponent(ref));if(f.content)return f;const blob=await this.request('/git/blobs/'+f.sha);return {...f,content:blob.content};}
-  async load(id:string):Promise<Draft|null>{await this.ensureBranch();try{const file=await this.file(this.draftPath(id));return {...JSON.parse(decodeText(file.content)),commit:file.sha};}catch(e){if((e as any).status===404)return null;throw e;}}
-  async save(draft:Draft,expectedSha?:string):Promise<Draft>{await this.ensureBranch();const payload={...draft};delete payload.commit;const result=await this.request('/contents/'+this.draftPath(draft.id),{method:'PUT',body:JSON.stringify({branch:DRAFT_BRANCH,content:encodeText(JSON.stringify(payload)),message:'Черновик: '+draft.title+' [skip ci]',...(expectedSha?{sha:expectedSha}:{})})});return {...payload,commit:result.content.sha};}
-  async history(id:string){await this.ensureBranch();return this.request('/commits?sha='+DRAFT_BRANCH+'&path='+encodeURIComponent(this.draftPath(id))+'&per_page=30');}
-  async revision(id:string,sha:string){const file=await this.file(this.draftPath(id),sha);return JSON.parse(decodeText(file.content)) as Draft;}
+  async load(id:string,locale:Locale='ru'):Promise<Draft|null>{await this.ensureBranch();try{const file=await this.file(this.draftPath(id,locale));return {...JSON.parse(decodeText(file.content)),locale,commit:file.sha};}catch(e){if((e as any).status===404)return null;throw e;}}
+  async save(draft:Draft,expectedSha?:string):Promise<Draft>{await this.ensureBranch();const payload={...draft};delete payload.commit;const result=await this.request('/contents/'+this.draftPath(draft.id,draft.locale),{method:'PUT',body:JSON.stringify({branch:DRAFT_BRANCH,content:encodeText(JSON.stringify(payload)),message:'Черновик'+(draft.locale==='en'?' [EN]':'')+': '+draft.title+' [skip ci]',...(expectedSha?{sha:expectedSha}:{})})});return {...payload,commit:result.content.sha};}
+  async history(id:string,locale:Locale='ru'){await this.ensureBranch();return this.request('/commits?sha='+DRAFT_BRANCH+'&path='+encodeURIComponent(this.draftPath(id,locale))+'&per_page=30');}
+  async revision(id:string,sha:string,locale:Locale='ru'){const file=await this.file(this.draftPath(id,locale),sha);return {...JSON.parse(decodeText(file.content)),locale} as Draft;}
   async upload(file:File){
     if(!['image/png','image/jpeg','image/webp','image/gif'].includes(file.type))throw new Error('Выберите PNG, JPG, WebP или GIF');if(file.size>5*1024*1024)throw new Error('Максимальный размер изображения — 5 МБ');
     await this.ensureBranch();const data=toBase64(new Uint8Array(await file.arrayBuffer())),path='editor-assets/'+crypto.randomUUID()+'.'+(file.type==='image/jpeg'?'jpg':file.type.split('/')[1]);
