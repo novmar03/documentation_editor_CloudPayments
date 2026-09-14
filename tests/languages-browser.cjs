@@ -7,11 +7,11 @@ const delay=ms=>new Promise(r=>setTimeout(r,ms));
  const server=spawn(process.execPath,['node_modules/vite/bin/vite.js','preview','--host','127.0.0.1','--port','4173'],{stdio:'inherit'});
  let browser;
  try{
-  const base='http://127.0.0.1:4173/documentation_editor_CloudPayments/';
+  const base='http://127.0.0.1:4173/';
   for(let n=0;n<100;n++){try{if((await fetch(base)).ok)break;}catch{}await delay(200);}
   browser=await chromium.launch({headless:true});
   const page=await browser.newPage({viewport:{width:1468,height:900}});
-  const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  const errors=[];page.on('pageerror',e=>{errors.push(e.message);console.error('Browser error:',e.message);});
   await page.goto(base+'#tech/api');
   const title=page.getByRole('textbox',{name:'Название страницы H1'});
   await title.fill('Русская проверка');
