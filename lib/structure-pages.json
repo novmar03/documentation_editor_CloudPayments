@@ -1,0 +1,10 @@
+{
+  "tech/methods": {
+    "id": "tech/methods",
+    "title": "Настройка методов оплаты",
+    "group": "tech",
+    "toc": [],
+    "editorHtml": "<p>Выберите способ оплаты, чтобы открыть инструкцию по настройке.</p><ul><li><a href=\"#/tech/methods/tpay\">T-Pay</a></li><li><a href=\"#/tech/methods/sbp\">СБП</a></li><li><a href=\"#/tech/methods/digital\">Цифровой рубль</a></li><li><a href=\"#/tech/methods/sberpay\">СберПэй</a></li><li><a href=\"#/tech/methods/mirpay\">МирПэй</a></li><li><a href=\"#/tech/methods/dolyami\">Долями</a></li></ul>",
+    "originalHtml": "<p>Выберите способ оплаты, чтобы открыть инструкцию по настройке.</p><ul><li><a href=\"#/tech/methods/tpay\">T-Pay</a></li><li><a href=\"#/tech/methods/sbp\">СБП</a></li><li><a href=\"#/tech/methods/digital\">Цифровой рубль</a></li><li><a href=\"#/tech/methods/sberpay\">СберПэй</a></li><li><a href=\"#/tech/methods/mirpay\">МирПэй</a></li><li><a href=\"#/tech/methods/dolyami\">Долями</a></li></ul>"
+  }
+}

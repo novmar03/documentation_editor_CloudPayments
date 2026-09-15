@@ -1,0 +1,277 @@
+[
+  {
+    "id": "start",
+    "title": "Начало работы",
+    "audience": "business",
+    "description": "Подключение и личный кабинет",
+    "items": [
+      {
+        "id": "start/connect",
+        "title": "Процесс подключения"
+      },
+      {
+        "id": "start/account",
+        "title": "Личный кабинет мерчанта"
+      }
+    ]
+  },
+  {
+    "id": "solutions",
+    "title": "Выбор платёжного решения",
+    "audience": "business",
+    "description": "Сравнение интерфейсов и вариантов подключения",
+    "items": [
+      {
+        "id": "solutions/compare",
+        "title": "Сравнение платежных интерфейсов"
+      },
+      {
+        "id": "solutions/widget",
+        "title": "Виджет"
+      },
+      {
+        "id": "solutions/blocks",
+        "title": "Платежные блоки"
+      },
+      {
+        "id": "solutions/checkout",
+        "title": "Скрипт check-out"
+      },
+      {
+        "id": "solutions/orders",
+        "title": "Одноразовые ссылки"
+      },
+      {
+        "id": "solutions/links",
+        "title": "Многоразовые ссылки"
+      },
+      {
+        "id": "solutions/charity",
+        "title": "Благотворительность"
+      },
+      {
+        "id": "solutions/infoshop",
+        "title": "Инфошоп"
+      },
+      {
+        "id": "solutions/sdk",
+        "title": "Мобильные SDK"
+      },
+      {
+        "id": "solutions/api",
+        "title": "API"
+      }
+    ]
+  },
+  {
+    "id": "methods",
+    "title": "Способы оплаты",
+    "audience": "business",
+    "description": "Оплата картой, Pay-методы и другие варианты",
+    "items": [
+      {
+        "id": "methods/card",
+        "title": "Банковская карта"
+      },
+      {
+        "id": "methods/tpay",
+        "title": "T-Pay"
+      },
+      {
+        "id": "methods/sberpay",
+        "title": "СберПэй"
+      },
+      {
+        "id": "methods/mirpay",
+        "title": "МирПэй"
+      },
+      {
+        "id": "methods/sbp",
+        "title": "СБП"
+      },
+      {
+        "id": "methods/dolyami",
+        "title": "Долями"
+      },
+      {
+        "id": "methods/installments",
+        "title": "Рассрочка"
+      },
+      {
+        "id": "methods/foreign",
+        "title": "Иностранные карты"
+      },
+      {
+        "id": "methods/digital",
+        "title": "Цифровой рубль"
+      }
+    ]
+  },
+  {
+    "id": "scenarios",
+    "title": "Бизнес-сценарии оплаты",
+    "audience": "both",
+    "description": "Подписки, повторные платежи и безопасная сделка",
+    "items": [
+      {
+        "id": "scenarios/recurrent",
+        "title": "Рекурренты"
+      },
+      {
+        "id": "scenarios/recurring",
+        "title": "Рекарринг"
+      },
+      {
+        "id": "scenarios/escrow",
+        "title": "Безопасная сделка"
+      },
+      {
+        "id": "scenarios/customization",
+        "title": "Кастомизация платежных интерфейсов"
+      }
+    ]
+  },
+  {
+    "id": "tech",
+    "title": "Технические аспекты подключения",
+    "audience": "developer",
+    "description": "Интерфейсы, API, уведомления и настройка способов оплаты",
+    "items": [
+      {
+        "id": "tech/widget",
+        "title": "Виджет"
+      },
+      {
+        "id": "tech/blocks",
+        "title": "Платежные блоки"
+      },
+      {
+        "id": "tech/checkout",
+        "title": "Скрипт check-out"
+      },
+      {
+        "id": "tech/orders",
+        "title": "Одноразовые ссылки"
+      },
+      {
+        "id": "tech/links",
+        "title": "Многоразовые ссылки"
+      },
+      {
+        "id": "tech/charity",
+        "title": "Благотворительность"
+      },
+      {
+        "id": "tech/infoshop",
+        "title": "Инфошоп"
+      },
+      {
+        "id": "tech/sdk",
+        "title": "Мобильные SDK"
+      },
+      {
+        "id": "tech/api",
+        "title": "API"
+      },
+      {
+        "id": "tech/notifications",
+        "title": "Уведомления"
+      },
+      {
+        "id": "tech/methods",
+        "title": "Настройка методов оплаты"
+      },
+      {
+        "id": "tech/methods/tpay",
+        "title": "T-Pay",
+        "parentId": "tech/methods"
+      },
+      {
+        "id": "tech/methods/sbp",
+        "title": "СБП",
+        "parentId": "tech/methods"
+      },
+      {
+        "id": "tech/methods/digital",
+        "title": "Цифровой рубль",
+        "parentId": "tech/methods"
+      },
+      {
+        "id": "tech/methods/sberpay",
+        "title": "СберПэй",
+        "parentId": "tech/methods"
+      },
+      {
+        "id": "tech/methods/mirpay",
+        "title": "МирПэй",
+        "parentId": "tech/methods"
+      },
+      {
+        "id": "tech/methods/dolyami",
+        "title": "Долями",
+        "parentId": "tech/methods"
+      }
+    ]
+  },
+  {
+    "id": "security",
+    "title": "Информационная безопасность",
+    "audience": "developer",
+    "description": "Требования PCI DSS и защита карточных данных",
+    "items": [
+      {
+        "id": "security",
+        "title": "Информационная безопасность"
+      }
+    ]
+  },
+  {
+    "id": "reference",
+    "title": "Тестирование, справочники и глоссарий",
+    "audience": "developer",
+    "description": "Проверка интеграции и справочные материалы",
+    "items": [
+      {
+        "id": "reference/testing",
+        "title": "Тестирование"
+      },
+      {
+        "id": "reference/directory",
+        "title": "Справочник"
+      },
+      {
+        "id": "reference/glossary",
+        "title": "Глоссарий"
+      }
+    ]
+  },
+  {
+    "id": "additional",
+    "title": "Дополнительно",
+    "audience": "both",
+    "description": "Подробнее об экосистеме CloudPayments",
+    "items": [
+      {
+        "id": "reference/ecosystem",
+        "title": "Экосистема CloudPayments"
+      }
+    ],
+    "links": [
+      {
+        "id": "reference/ecosystem",
+        "title": "CloudKassir",
+        "anchor": "section-aa230662-870b-41bc-a678-7de4084f6934"
+      },
+      {
+        "id": "reference/ecosystem",
+        "title": "CloudTips",
+        "anchor": "section-880a05fd-9e8b-43ab-b340-213c76b71dc7"
+      },
+      {
+        "id": "reference/ecosystem",
+        "title": "CloudSoft",
+        "anchor": "section-3a87281e-9d9b-4ef3-a956-af555f14b535"
+      }
+    ]
+  }
+]
