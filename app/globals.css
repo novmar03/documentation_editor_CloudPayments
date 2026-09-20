@@ -242,3 +242,9 @@ button { cursor: pointer; }
 .page-subgroup > summary .page-link { flex: 1; min-width: 0; padding-left: 2px; }
 .page-subgroup[open] > summary::before { transform: rotate(90deg); }
 .page-subgroup > nav { margin-left: 12px; }
+.heading-copy-link { flex: none; padding: 5px; border: 0; border-radius: 4px; background: transparent; color: #718196; cursor: pointer; }
+.heading-copy-link:hover, .heading-copy-link:focus-visible { color: var(--cp-blue); background: #eaf1ff; }
+.link-kind { display: flex; gap: 20px; border: 0; padding: 0; }
+.link-kind label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.documentation-link-fields { display: grid; gap: 10px; min-width: 0; }
+.documentation-link-fields select { width: 100%; min-width: 0; padding: 9px 12px; border: 1px solid #dce3ed; border-radius: 6px; background: white; font: inherit; }
