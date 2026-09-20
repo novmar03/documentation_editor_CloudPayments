@@ -1,7 +1,7 @@
 import {createContext,useContext,useRef,useState} from 'react';
 import {Node,mergeAttributes} from '@tiptap/core';
 import {NodeSelection} from '@tiptap/pm/state';
-import {NodeViewWrapper,ReactNodeViewRenderer,type NodeViewProps} from '@tiptap/react';
+import {NodeViewWrapper,NodeViewContent,ReactNodeViewRenderer,type NodeViewProps} from '@tiptap/react';
 import {toast} from 'sonner';
 import {Button} from '@/components/ui/button';
 import {Input} from '@/components/ui/input';
@@ -32,6 +32,7 @@ function CarouselView({node,editor,getPos,selected}:NodeViewProps){
   }
   function move(direction:number){const target=index+direction;if(target<0||target>=slides.length)return;edit(items=>{const result=[...items];result.splice(target,0,...result.splice(index,1));return result;});setActive(target);}
   return <NodeViewWrapper className={'carousel-editor '+(selected?'selected':'')} contentEditable={false}>
+    <NodeViewContent style={{display:'none'}} aria-hidden="true"/>
     <div className="carousel-editor-header"><strong>Карусель</strong><Button variant="outline" size="sm" disabled={busy} onClick={()=>input.current?.click()}>{busy?'Загружаем…':'Добавить изображения'}</Button></div>
     <input ref={input} type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif" aria-label="Изображения для карусели" hidden onChange={e=>void upload(Array.from(e.target.files||[]))}/>
     {slide?<><div className="carousel-editor-frame"><img src={safeLink(slide.attrs?.src,true)} alt={slide.attrs?.alt||''}/></div><div className="carousel-editor-controls"><Button variant="ghost" disabled={index===0} aria-label="Предыдущее изображение" onClick={()=>setActive(index-1)}>←</Button><span aria-live="polite">{index+1} / {slides.length}</span><Button variant="ghost" disabled={index===slides.length-1} aria-label="Следующее изображение" onClick={()=>setActive(index+1)}>→</Button></div>
