@@ -11,13 +11,14 @@ export function safeLink(value:unknown,image=false):string {
   try{const u=new URL(s);if((image?['http:','https:']:['http:','https:','mailto:','tel:']).includes(u.protocol))return u.href;}catch{}
   return '';
 }
-const allowed=new Set(['doc','paragraph','text','heading','bulletList','orderedList','listItem','codeBlock','blockquote','hardBreak','horizontalRule','table','tableRow','tableCell','tableHeader','image','callout','docButton']);
+const allowed=new Set(['doc','paragraph','text','heading','bulletList','orderedList','listItem','codeBlock','blockquote','hardBreak','horizontalRule','table','tableRow','tableCell','tableHeader','image','carousel','callout','docButton']);
 export function validateDocument(doc:DocNode) {
   let count=0;
   const walk=(n:DocNode,depth:number)=>{
     if(!n||!allowed.has(n.type)||depth>30||++count>60000)throw new Error('Неподдерживаемый формат документа');
     if(n.text!==undefined&&typeof n.text!=='string')throw new Error('Некорректный текст');
     if(n.content&&!Array.isArray(n.content))throw new Error('Некорректные блоки');
+    if(n.type==='carousel'&&n.content?.some(child=>child.type!=='image'))throw new Error('Карусель может содержать только изображения');
     (n.content||[]).forEach(child=>walk(child,depth+1));
   };
   if(doc?.type!=='doc')throw new Error('Ожидается документ');walk(doc,0);
@@ -85,6 +86,11 @@ export function renderDocument(doc:DocNode):string {
       }
       case 'tableRow':return `<tr>${inside()}</tr>`;
       case 'tableCell':case 'tableHeader':{const tag=n.type==='tableCell'?'td':'th';return `<${tag} colspan="${num(a.colspan,1,50,1)}" rowspan="${num(a.rowspan,1,100,1)}">${inside()}</${tag}>`;}
+      case 'carousel':{
+        const slides=(n.content||[]).filter(child=>child.type==='image'&&safeLink(child.attrs?.src,true));
+        if(!slides.length)return '';
+        return `<section class="editor-carousel" data-editor-carousel data-carousel-id="${escapeHtml(a.id||'')}" role="region" aria-label="Карусель изображений" aria-roledescription="карусель" tabindex="0"><div class="editor-carousel-slides">${slides.map((slide,i)=>{const s=slide.attrs||{};return `<figure data-carousel-slide${i?' hidden':''} role="group" aria-label="${i+1} / ${slides.length}"><div class="editor-carousel-frame"><img src="${escapeHtml(safeLink(s.src,true))}" alt="${escapeHtml(s.alt||'')}" draggable="false"></div><figcaption>${escapeHtml(s.caption||'')}</figcaption></figure>`;}).join('')}</div><div class="editor-carousel-controls"><button type="button" data-carousel-step="-1" aria-label="Предыдущее изображение"${slides.length<2?' disabled':''}>←</button><span data-carousel-counter role="status" aria-live="polite" aria-atomic="true">1 / ${slides.length}</span><button type="button" data-carousel-step="1" aria-label="Следующее изображение"${slides.length<2?' disabled':''}>→</button></div></section>`;
+      }
       case 'image':{const src=safeLink(a.src,true);return src?`<figure style="text-align:${['left','right'].includes(a.align)?a.align:'center'}"><img src="${escapeHtml(src)}" alt="${escapeHtml(a.alt||'')}" style="width:${num(a.width,10,100,100)}%;max-width:100%;height:auto"></figure>`:'';}
       case 'docButton':{const href=safeLink(a.href);return `<div style="text-align:${['left','right'].includes(a.align)?a.align:'center'};margin:24px 0"><a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;background:#326dff;color:#fff;text-decoration:none;border-radius:12px;padding:12px 20px;max-width:100%;width:${a.fullWidth?'100%':num(a.width,80,1000,240)+'px'};min-height:${num(a.height,32,200,56)}px;font-size:${num(a.fontSize,12,40,18)}px;font-weight:600">${escapeHtml(a.label||'Кнопка')}</a></div>`;}
       default:return '';

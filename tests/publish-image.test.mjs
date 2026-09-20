@@ -23,7 +23,7 @@ publisher.api=async (path,init={})=>{
 };
 const before=structuredClone(content);
 const result=await publisher.publish({id:'test',title:'Test',baseHtml:'old'},content);
-assert.equal(requests.filter(r=>r.path==='/git/blobs').length,8);
+assert.equal(requests.filter(r=>r.path==='/git/blobs').length,9);
 const binary=requests.filter(r=>r.path==='/git/blobs'&&r.body.encoding==='base64');
 assert.equal(binary.length,1);
 assert.equal(binary[0].body.content,'A'.repeat(2*1024*1024));

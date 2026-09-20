@@ -4,6 +4,7 @@ import {preparePublishedDocument,normalizePublishedImages} from './image-assets'
 import {installOfflineLinks,installNativeLinks} from './documentation-links';
 import {structurePaths,structureWrites} from './structure-publication';
 import type {NavigationGroup} from './structure';
+import {installCarouselHtml,installCarouselComponent,carouselRuntimeSource} from './carousel-publication';
 export type PublishConfig={provider:'github'|'gitlab';project:string;branch:string;host:string;token:string};
 type RepoFile={content:string;sha:string};
 export class Publisher {
@@ -55,7 +56,7 @@ export class Publisher {
     const english=draft.locale==='en';
     const overlayPath='src/content/editor-pages'+(english?'.en':'')+'.json';
     const docPath=(english?'i18n/en/docusaurus-plugin-content-docs/current/':'docs/')+draft.id+'.md';
-    const paths=['index.html','src/offline-template.html','src/components/navigation.json',overlayPath,'src/components/EditedSection.jsx','scripts/export-html.py','sidebars.js',docPath];
+    const paths=['index.html','src/offline-template.html','src/components/navigation.json',overlayPath,'src/components/EditedSection.jsx','src/components/carousel-runtime.js','scripts/export-html.py','sidebars.js',docPath];
     const loaded=await Promise.all(paths.map(p=>this.file(p,ref)));const files=new Map(paths.map((p,i)=>[p,loaded[i]]));
     const index=files.get('index.html');if(!index)throw new Error('В репозитории нет index.html вашей документации');
     const marker=/<script id="document-data" type="application\/json">([\s\S]*?)<\/script>/;
@@ -115,6 +116,10 @@ export class Publisher {
       writes['src/components/EditedSection.jsx']=writes['src/components/EditedSection.jsx'].replace("(content[page]?.segments[index]||'')","(content[page]?.segments[index]||'').replaceAll('src=\"static/img/editor/', 'src=\"'+base+'img/editor/')");
     }
     writes['src/components/EditedSection.jsx']=installNativeLinks(writes['src/components/EditedSection.jsx']);
+    writes['index.html']=installCarouselHtml(writes['index.html']);
+    if(writes['src/offline-template.html'])writes['src/offline-template.html']=installCarouselHtml(writes['src/offline-template.html']);
+    writes['src/components/EditedSection.jsx']=installCarouselComponent(writes['src/components/EditedSection.jsx']);
+    writes['src/components/carousel-runtime.js']=carouselRuntimeSource;
     let sha:string;
     if(c.provider==='github'){
       const parent=await this.api('/git/commits/'+ref);

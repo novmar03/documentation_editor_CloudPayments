@@ -61,3 +61,10 @@ Structure changes are saved locally and published with «Опубликоват�
 New pages get empty Russian content and an English translation placeholder. Publish the structure before publishing the new page's content in the existing editor. Existing content drafts and translations are independent of structural edits. Renaming updates navigation and the published Russian title; an existing content draft keeps its independently edited title. Changing an audience applies to the selected subtree. A child targeted to an audience different from its parent is promoted in that audience's view.
 
 «Убрать из навигации» sets `hidden`; it never deletes page content or files. Hidden subtrees can be restored. Empty navigation-only categories stay editable but are omitted from the public site until they contain a visible page, as required by Docusaurus. No test pages are published during development.
+# Carousel block
+
+Choose «Блок» → «Карусель» (or «Добавить блок» → «Карусель»). «Добавить изображения» accepts multiple PNG, JPG, WebP, or GIF files with the existing 5 MB per-image limit. Select a thumbnail to edit its alt text or optional caption, move it earlier/later, or remove it. Existing undo/redo also applies to slide changes.
+
+Carousel content is an ordered array of ordinary `image` child nodes. Single images and carousel slides call the same `uploadEditorImage` helper and `Repository.upload`; the existing recursive draft serialization, hydration, content-addressed publishing and image deduplication are unchanged. Removing a slide never deletes its stored file.
+
+Published images use a fixed responsive frame with `object-fit: contain`. The shared runtime provides previous/next arrows, a live slide counter, horizontal touch swipes and arrow-key navigation, without automatic playback. It is used in preview, exported HTML, the standalone documentation reader and Docusaurus. Page publication installs the runtime and preserves it in the standalone HTML template for future builds. Empty carousels remain in drafts but are omitted from published output.
