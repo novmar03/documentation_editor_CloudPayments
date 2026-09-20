@@ -2,6 +2,7 @@ import seed from './seed.json';
 import groups from './navigation.json';
 import additions from './structure-pages.json';
 import type {NavigationGroup,NavigationNode} from './structure';
+import {DOCS_URL,DOCS_ROUTING} from './config';
 export type NavigationPage=NavigationNode;
 export const navigation:NavigationGroup[]=groups as NavigationGroup[];
 const source:Record<string,any>={...seed.pages,...additions};
@@ -11,7 +12,8 @@ export function applyNavigation(next:NavigationGroup[],published?:Record<string,
   for(const group of next)for(const item of group.items){
     if(item.type==='category')continue;
     const remote=published?.[item.id];
-    pages[item.id]={...pages[item.id],...(remote?{...remote,editorHtml:remote.html,originalHtml:remote.html}:{}),...item,group:group.id};
+    const editorHtml=remote?.html?.replace(/src="((?:static\/)?img\/editor\/[^"\s]+)"/g,(_:string,path:string)=>'src="'+new URL(DOCS_ROUTING==='path'?path.replace(/^static\//,''):path,DOCS_URL).href+'"');
+    pages[item.id]={...pages[item.id],...(remote?{...remote,editorHtml,originalHtml:remote.html}:{}),...item,group:group.id};
     pages[item.id].editorHtml??='<p></p>';pages[item.id].originalHtml??='';
   }
 }
