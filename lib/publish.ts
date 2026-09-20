@@ -2,10 +2,38 @@ import {DocNode,renderDocument,headings,normalizeHeadings} from './document';
 import {Draft,decodeText} from './repository';
 import {preparePublishedDocument,normalizePublishedImages} from './image-assets';
 import {installOfflineLinks,installNativeLinks} from './documentation-links';
+import {structurePaths,structureWrites} from './structure-publication';
+import type {NavigationGroup} from './structure';
 export type PublishConfig={provider:'github'|'gitlab';project:string;branch:string;host:string;token:string};
 type RepoFile={content:string;sha:string};
 export class Publisher {
   constructor(public config:PublishConfig){}
+  async publishStructure(groups:NavigationGroup[],base:NavigationGroup[]){
+    const c=this.config;if(!c.token.trim())throw new Error('Подключите GitHub для публикации структуры');
+    if(c.provider!=='github')throw new Error('Публикация структуры доступна через GitHub');
+    const head=await this.api('/git/ref/heads/'+encodeURIComponent(c.branch)),ref=head.object.sha;
+    const loaded=await Promise.all(structurePaths.map(path=>this.file(path,ref)));
+    const files:Record<string,string>={};structurePaths.forEach((path,i)=>{if(!loaded[i])throw new Error('Не найден файл документации: '+path);files[path]=loaded[i]!.content;});
+    const writes=structureWrites(files,groups,base);
+    // Do not overwrite an existing route which is absent from navigation.
+    for(const path of Object.keys(writes).filter(p=>p.endsWith('.md')))if(await this.file(path,ref))throw new Error('Адрес уже занят существующей страницей: '+path);
+    const oldTitles=new Map(base.flatMap(g=>g.items.filter(p=>p.type!=='category').map(p=>[p.id,p.title])));
+    for(const page of groups.flatMap(g=>g.items).filter(p=>p.type!=='category'&&oldTitles.has(p.id)&&oldTitles.get(p.id)!==p.title)){
+      const path='docs/'+page.id+'.md',file=await this.file(path,ref);
+      if(!file)throw new Error('Не найдена страница для переименования: '+page.id);
+      const front=file.content.match(/^---\r?\n[\s\S]*?\r?\n---/);
+      if(!front)throw new Error('Не удалось обновить название страницы: '+page.id);
+      const header=front[0].replace(/^title:.*\r?\n/m,'').replace(/^---\r?\n/,'---\ntitle: '+JSON.stringify(page.title)+'\n');
+      writes[path]=header+file.content.slice(front[0].length);
+    }
+    const parent=await this.api('/git/commits/'+ref),tree=[];
+    for(const [path,content] of Object.entries(writes)){
+      const blob=await this.api('/git/blobs',{method:'POST',body:JSON.stringify({content,encoding:'utf-8'})});tree.push({path,mode:'100644',type:'blob',sha:blob.sha});
+    }
+    const created=await this.api('/git/trees',{method:'POST',body:JSON.stringify({base_tree:parent.tree.sha,tree})});
+    const commit=await this.api('/git/commits',{method:'POST',body:JSON.stringify({message:'Обновить структуру документации',tree:created.sha,parents:[ref]})});
+    await this.api('/git/refs/heads/'+encodeURIComponent(c.branch),{method:'PATCH',body:JSON.stringify({sha:commit.sha,force:false})});return commit.sha;
+  }
   async api(path:string,init:RequestInit={}):Promise<any>{
     const c=this.config,url=c.provider==='github'?'https://api.github.com/repos/'+c.project+path:c.host.replace(/\/$/,'')+'/api/v4/projects/'+encodeURIComponent(c.project)+path;
     const response=await fetch(url,{...init,headers:{'Content-Type':'application/json',...(c.provider==='github'?{Authorization:'Bearer '+c.token,Accept:'application/vnd.github+json'}:{'PRIVATE-TOKEN':c.token}),...init.headers}});

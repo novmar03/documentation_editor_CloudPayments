@@ -50,3 +50,14 @@ pnpm preview
 Иконка ссылки в оглавлении копирует публичный адрес раздела, не изменяя текст. Новые разделы станут доступны по ссылке после публикации страницы.
 
 Общий адрес задаётся в `lib/config.ts` и может быть переопределён переменной сборки `VITE_DOCS_URL`. Для текущего HTML-сайта используется `VITE_DOCS_ROUTING=hash`; при переходе на обычные маршруты задайте `VITE_DOCS_ROUTING=path`. Внутри документа ссылки всегда хранятся как `/tech/api/#id` или `/en/tech/api/#id`. Публикация подключает их преобразование для HTML-сайта и учитывает базовый путь в Docusaurus, сохраняя внешние ссылки.
+# Documentation structure management
+
+Open «Структура документации» in the editor sidebar. The two audience trees are views of the same `navigation.json`; `both` nodes are shared, not duplicated. A page's ID and route remain unchanged when moving, nesting, renaming, or changing its audience. Ordering uses the existing array order and nesting uses `parentId`.
+
+Legacy groups remain categories. Nested categories use `type: category`. Top-level pages use a `root: true` group wrapper so the existing group/items schema can represent them without a second navigation store. The wrapper is not rendered as an extra section. The transient flat tree in `lib/structure.ts` is only an editing view; only navigation groups are persisted.
+
+Structure changes are saved locally and published with «Опубликовать структуру». Publication reads a pinned repository revision, checks the navigation baseline, and creates one non-forced commit. It updates the standalone reader, HTML exporter, Docusaurus sidebars, overview components, and locale adapter together. Stale baselines and occupied page routes stop publication. «Загрузить с сайта» refreshes the baseline, with confirmation before discarding local structure edits.
+
+New pages get empty Russian content and an English translation placeholder. Publish the structure before publishing the new page's content in the existing editor. Existing content drafts and translations are independent of structural edits. Renaming updates navigation and the published Russian title; an existing content draft keeps its independently edited title. Changing an audience applies to the selected subtree. A child targeted to an audience different from its parent is promoted in that audience's view.
+
+«Убрать из навигации» sets `hidden`; it never deletes page content or files. Hidden subtrees can be restored. Empty navigation-only categories stay editable but are omitted from the public site until they contain a visible page, as required by Docusaurus. No test pages are published during development.
