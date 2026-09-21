@@ -21,6 +21,7 @@ import {navigation,pages,type NavigationPage} from '@/lib/navigation';
 import {extensions,languages} from './editor-extensions';
 import {DocNode,normalizeHeadings,headings,moveSection,renderDocument,safeLink,textOf} from '@/lib/document';
 import {Repository,RepoConfig,Draft,storedDocument} from '@/lib/repository';
+import {replaceSelectedImage} from '@/lib/replace-image';
 import {cacheDraft,recoverDraft} from '@/lib/recovery';
 import {Publisher} from '@/lib/publish';
 import {selectedColumnWidth,setColumnWidth} from '@/lib/columns';
@@ -224,7 +225,12 @@ function BlockSettings({editor,tick,repository,onConnect}:{editor:Editor;tick:nu
   const attrs=editor.getAttributes(selectedType);
   useEffect(()=>{const onUpload=()=>{fileRef.current?.click();};window.addEventListener('editor-upload-image',onUpload);return()=>window.removeEventListener('editor-upload-image',onUpload);},[repository]);
   const update=(name:string,value:any)=>editor.commands.updateAttributes(selectedType,{[name]:value});
-  async function upload(file?:File){if(!file)return;setUploading(true);try{const attrs=await uploadEditorImage(file,repository);editor.chain().focus().setImage(attrs as any).run();toast.success('Изображение добавлено');}catch(e){toast.error(errorText(e));}finally{setUploading(false);if(fileRef.current)fileRef.current.value='';}}
+  async function upload(file?:File){if(!file)return;setUploading(true);try{
+    if(selectedType==='image'){
+      if(!await replaceSelectedImage(editor,()=>uploadEditorImage(file,repository)))return;
+    }else{const attrs=await uploadEditorImage(file,repository);editor.chain().focus().setImage(attrs as any).run();}
+    toast.success('Изображение добавлено');
+  }catch(e){toast.error(errorText(e));}finally{setUploading(false);if(fileRef.current)fileRef.current.value='';}}
   const title=({paragraph:'Текст',heading:'Заголовок',codeBlock:'Код',callout:'Уведомление',table:'Таблица',docButton:'Кнопка',image:'Изображение',carousel:'Карусель'} as Record<string,string>)[selectedType]||'Текст';
   return <div className="block-settings"><div className="block-type-label">{title}</div><input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={e=>void upload(e.target.files?.[0])}/>
     {selectedType==='carousel'&&<p className="form-help">Добавляйте изображения, меняйте порядок, альтернативный текст и подписи прямо в блоке «Карусель».</p>}

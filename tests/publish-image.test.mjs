@@ -36,7 +36,11 @@ for(const r of requests.filter(r=>r.path==='/git/blobs'&&r.body.encoding==='utf-
 const prepared=await preparePublishedDocument({type:'doc',content:[content.content[0],content.content[0]]});
 assert.equal(prepared.assets.size,1);
 assert.equal(await normalizePublishedImages(renderDocument(content)),result.html);
-assert.ok(prepared.doc.content[0].attrs.scriptNote===note);
+assert.equal(prepared.doc.content[0].attrs.scriptNote,undefined);
+for(const r of requests.filter(r=>r.path==='/git/blobs'&&r.body.encoding==='utf-8')){
+ assert.ok(!r.body.content.includes('scriptNote'));
+ assert.ok(!r.body.content.includes('@startuml'));
+}
 await assert.rejects(()=>preparePublishedDocument({type:'doc',content:[{type:'image',attrs:{src:'',assetPath:'editor-assets/test.png'}}]}),/Изображение не загружено/);
 assert.equal(requests.at(-1).body.force,false);
 // Existing drafts remain publishable after the one-time URL migration.

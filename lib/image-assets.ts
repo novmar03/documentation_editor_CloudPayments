@@ -1,4 +1,5 @@
 import type {DocNode} from './document';
+import {withoutEditorMetadata} from './editor-metadata';
 
 export type ImageAsset = {path:string; content:string; encoding:'base64'};
 const dataImage = /^data:image\/(png|jpeg|gif|webp);base64,([A-Za-z0-9+/=]+)$/;
@@ -24,7 +25,7 @@ export async function preparePublishedDocument(source:DocNode) {
     for(const child of node.content||[])await visit(child);
   };
   await visit(doc);
-  return {doc,assets};
+  return {doc:withoutEditorMetadata(doc),assets};
 }
 
 /** Migration changes image locations, not the page revision being edited. */

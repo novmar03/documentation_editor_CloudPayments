@@ -68,3 +68,9 @@ Choose «Блок» → «Карусель» (or «Добавить блок» �
 Carousel content is an ordered array of ordinary `image` child nodes. Single images and carousel slides call the same `uploadEditorImage` helper and `Repository.upload`; the existing recursive draft serialization, hydration, content-addressed publishing and image deduplication are unchanged. Removing a slide never deletes its stored file.
 
 Published images use a fixed responsive frame with `object-fit: contain`. The shared runtime provides previous/next arrows, a live slide counter, horizontal touch swipes and arrow-key navigation, without automatic playback. It is used in preview, exported HTML, the standalone documentation reader and Docusaurus. Page publication installs the runtime and preserves it in the standalone HTML template for future builds. Empty carousels remain in drafts but are omitted from published output.
+
+# Editor-only image notes
+
+`image.attrs.scriptNote` belongs to the image node in the page JSON saved on the existing `documentation-drafts` branch (`editor-data/pages/…`, or `editor-data/en/pages/…`). Opening the page with GitHub connected on another device loads that JSON, including notes. Publication retains the saved draft. Moving a node carries its note; replacing an image updates its attributes without losing the note; deleting the node removes its note from the current draft. Existing revision history remains available.
+
+The publication boundary strips `scriptNote` and private image asset references from public page data, including nested carousel images. It also cleans older entries in both locale overlays and the embedded reader data when publishing a page. HTML exports and previews render only public image attributes. Notes are editor-only, not a secret-storage facility: access to draft files follows the GitHub repository's visibility and permissions.

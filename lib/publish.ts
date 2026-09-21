@@ -5,6 +5,7 @@ import {installOfflineLinks,installNativeLinks} from './documentation-links';
 import {structurePaths,structureWrites} from './structure-publication';
 import type {NavigationGroup} from './structure';
 import {installCarouselHtml,installCarouselComponent,carouselRuntimeSource} from './carousel-publication';
+import {withoutEditorMetadata} from './editor-metadata';
 export type PublishConfig={provider:'github'|'gitlab';project:string;branch:string;host:string;token:string};
 type RepoFile={content:string;sha:string};
 export class Publisher {
@@ -56,12 +57,13 @@ export class Publisher {
     const english=draft.locale==='en';
     const overlayPath='src/content/editor-pages'+(english?'.en':'')+'.json';
     const docPath=(english?'i18n/en/docusaurus-plugin-content-docs/current/':'docs/')+draft.id+'.md';
-    const paths=['index.html','src/offline-template.html','src/components/navigation.json',overlayPath,'src/components/EditedSection.jsx','src/components/carousel-runtime.js','scripts/export-html.py','sidebars.js',docPath];
+    const otherOverlayPath='src/content/editor-pages'+(english?'':'.en')+'.json';
+    const paths=['index.html','src/offline-template.html','src/components/navigation.json',overlayPath,otherOverlayPath,'src/components/EditedSection.jsx','src/components/carousel-runtime.js','scripts/export-html.py','sidebars.js',docPath];
     const loaded=await Promise.all(paths.map(p=>this.file(p,ref)));const files=new Map(paths.map((p,i)=>[p,loaded[i]]));
     const index=files.get('index.html');if(!index)throw new Error('В репозитории нет index.html вашей документации');
     const marker=/<script id="document-data" type="application\/json">([\s\S]*?)<\/script>/;
     const match=index.content.match(marker);if(!match)throw new Error('Этот репозиторий не содержит ожидаемую структуру документации');
-    const data=JSON.parse(match[1]);if(!data.pages?.[draft.id])throw new Error('Страница отсутствует в документации');
+    const data=withoutEditorMetadata(JSON.parse(match[1]));if(!data.pages?.[draft.id])throw new Error('Страница отсутствует в документации');
     const localePages=english?((data.translations??={}).en??={pages:{}}).pages:data.pages;
     const currentHtml=localePages[draft.id]?.html||'';
     if(await normalizePublishedImages(currentHtml)!==await normalizePublishedImages(draft.publishedHtml||draft.baseHtml))throw new Error('На сайте есть изменения, сделанные вне редактора. Публикация остановлена, чтобы сохранить их. Скачайте HTML с вашими правками и согласуйте обновление страницы.');
@@ -74,7 +76,12 @@ export class Publisher {
     const offlineTemplate=files.get('src/offline-template.html');
     if(offlineTemplate)writes['src/offline-template.html']=installOfflineLinks(offlineTemplate.content);
     if(!english)writes['src/components/navigation.json']=JSON.stringify(data.groups,null,2)+'\n';
-    const overlay=JSON.parse(files.get(overlayPath)?.content||'{}');
+    const overlay=withoutEditorMetadata(JSON.parse(files.get(overlayPath)?.content||'{}'));
+    const otherOverlay=files.get(otherOverlayPath);
+    if(otherOverlay){
+      const original=JSON.parse(otherOverlay.content),clean=withoutEditorMetadata(original);
+      if(JSON.stringify(original)!==JSON.stringify(clean))writes[otherOverlayPath]=JSON.stringify(clean,null,2)+'\n';
+    }
     const inner=html.replace(/^<div class="imported-api">/,'').replace(/<\/div>$/,'');
     const matches=[...inner.matchAll(/<h([2-6])\b[^>]*>[\s\S]*?<\/h\1>/g)];
     const segments=[inner.slice(0,matches[0]?.index??inner.length),...matches.map((m,i)=>inner.slice(m.index!+m[0].length,matches[i+1]?.index??inner.length))];
