@@ -28,7 +28,7 @@ export async function replaceSelectedImage(editor:Editor,upload:()=>Promise<Reco
     const node=editor.state.doc.nodeAt(position);
     if(node?.type.name!=='image')return false;
     editor.view.dispatch(editor.state.tr.setNodeMarkup(position,undefined,{
-      ...node.attrs,...image,scriptNote:node.attrs.scriptNote||'',
+      ...node.attrs,...image,imageId:node.attrs.imageId,scriptNote:node.attrs.scriptNote||'',
     }));
     return true;
   }finally{editor.off('transaction',track);}

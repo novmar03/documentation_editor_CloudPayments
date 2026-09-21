@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {draftKey,editorRoute,pageUrl} from '../lib/locales.ts';
 import {Repository,encodeText} from '../lib/repository.ts';
 import {Publisher} from '../lib/publish.ts';
+import {gitMemory} from './git-memory.mjs';
 assert.equal(draftKey('tech/api'),'tech/api');
 assert.equal(draftKey('tech/api','en'),'en/tech/api');
 assert.deepEqual(editorRoute('#en/tech/api'),{id:'tech/api',locale:'en'});
@@ -9,12 +10,13 @@ assert.equal(pageUrl('/docs/','tech/api','en'),'/docs/#/en/tech/api');
 const repo=new Repository({project:'test/editor',defaultBranch:'main',token:'test'});
 assert.equal(repo.draftPath('tech/api'),'editor-data/pages/tech/api.json');
 assert.equal(repo.draftPath('tech/api','en'),'editor-data/en/pages/tech/api.json');
-const requests=[];repo.ready=true;
-repo.request=async(path,options={})=>{requests.push({path,options});return options.method==='PUT'?{content:{sha:'saved'}}:{content:encodeText(JSON.stringify({id:'tech/api',title:'English',content:{type:'doc'},updated:'now',baseHtml:''})),sha:'english'};};
+const memory=gitMemory(),requests=memory.requests;repo.ready=true;repo.request=memory.request;
+memory.seed(repo.draftPath('tech/api','en'),{id:'tech/api',title:'English',content:{type:'doc'},updated:'now',baseHtml:''});
 assert.equal((await repo.load('tech/api','en')).locale,'en');
-await repo.save({id:'tech/api',locale:'en',title:'English',content:{type:'doc'},updated:'now',baseHtml:''});
-await repo.history('tech/api','en');await repo.revision('tech/api','revision','en');
-assert.ok(requests.every(r=>decodeURIComponent(r.path).includes('editor-data/en/pages/tech/api.json')));
+await repo.save(await repo.load('tech/api','en'));
+await repo.history('tech/api','en');await repo.revision('tech/api',memory.head,'en');
+assert.ok(requests.filter(r=>r.path.startsWith('/contents/')||r.path.startsWith('/commits?')).every(r=>decodeURIComponent(r.path).includes('editor-data/en/')));
+assert.ok(memory.json(repo.notesPath('tech/api','en')));
 const original={groups:[{id:'tech',items:[{id:'tech/api',title:'Русское название'}]}],pages:{'tech/api':{id:'tech/api',title:'Русское название',html:'<p>Русский текст</p>',toc:[],group:'tech'}}};
 const files={
  'index.html':'<script id="document-data" type="application/json">'+JSON.stringify(original)+'</script>',

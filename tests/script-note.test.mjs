@@ -6,27 +6,22 @@ import {Repository,storedDocument} from '../lib/repository.ts';
 import {Publisher} from '../lib/publish.ts';
 import {replaceSelectedImage} from '../lib/replace-image.ts';
 import {renderDocument} from '../lib/document.ts';
+import {ensureImageIds} from '../lib/image-notes.ts';
+import {gitMemory} from './git-memory.mjs';
 
 const note='private-image-note: <script> source\nРусский текст';
-const image=(scriptNote=note)=>({type:'image',attrs:{src:'data:image/png;base64,AQID',assetPath:'editor-assets/1234.png',alt:'Image',scriptNote}});
+const image=(scriptNote=note)=>({type:'image',attrs:{imageId:scriptNote===note?'first-image':'second-image',src:'data:image/png;base64,AQID',assetPath:'editor-assets/1234.png',alt:'Image',scriptNote}});
 
 test('GitHub save → publish → another device preserves notes, while every public write excludes them (RU/EN)',async()=>{
-  const remote=new Map();
+  const remote=gitMemory();
   function device(){
     const repo=new Repository({project:'test/editor',defaultBranch:'main',token:'test'});repo.ready=true;
-    repo.request=async(path,options={})=>{
-      const key=path.split('?')[0];
-      if(options.method==='PUT'){
-        const body=JSON.parse(options.body);assert.equal(body.branch,'documentation-drafts');
-        remote.set(key,{content:body.content,sha:'revision-'+remote.size});return {content:{sha:remote.get(key).sha}};
-      }
-      assert(remote.has(key));return remote.get(key);
-    };
+    repo.request=remote.request;
     repo.image=async()=>image().attrs.src;
     return repo;
   }
   for(const locale of ['ru','en']){
-    const first=device(),source={type:'doc',content:[image(),{type:'carousel',content:[image('second-private-note')]}]};
+    const first=device(),source=await ensureImageIds({type:'doc',content:[image(),{type:'carousel',content:[image('second-private-note')]}]});
     const saved=await first.save({id:'tech/api',locale,title:'API',content:storedDocument(source),baseHtml:'',updated:'2026-09-21'});
     const oldOverlay={'old/page':{content:source}};
     const data={pages:{'tech/api':{html:'',content:source}},groups:[]};
@@ -57,15 +52,15 @@ test('GitHub save → publish → another device preserves notes, while every pu
     assert(!renderDocument(hydrated).includes('private-image-note'));
     // Reordering carries the node and its note; deletion removes both from current state.
     hydrated.content.reverse();
-    await second.save({...loaded,content:storedDocument(hydrated)},loaded.commit);
+    const moved=await second.save({...loaded,content:storedDocument(hydrated)},loaded.commit);
     assert.equal((await device().load('tech/api',locale)).content.content[1].attrs.scriptNote,note);
     hydrated.content.pop();
-    await second.save({...loaded,content:storedDocument(hydrated)},loaded.commit);
+    await second.save({...moved,content:storedDocument(hydrated)},moved.commit);
     assert(!JSON.stringify((await device().load('tech/api',locale)).content).includes('private-image-note'));
   }
 });
 
-const schema=new Schema({nodes:{doc:{content:'block*'},text:{group:'inline'},paragraph:{group:'block',content:'text*'},image:{group:'block',atom:true,attrs:{src:{default:''},assetPath:{default:null},alt:{default:''},scriptNote:{default:''}}}}});
+const schema=new Schema({nodes:{doc:{content:'block*'},text:{group:'inline'},paragraph:{group:'block',content:'text*'},image:{group:'block',atom:true,attrs:{imageId:{default:null},src:{default:''},assetPath:{default:null},alt:{default:''},scriptNote:{default:''}}}}});
 function editor(){
   const doc=schema.nodeFromJSON({type:'doc',content:[image(),image('other')]});
   let listener;
@@ -81,10 +76,11 @@ test('image replacement retains latest note despite selection and document chang
   ed.view.dispatch(ed.state.tr.insert(0,schema.nodes.paragraph.create()));
   ed.view.dispatch(ed.state.tr.setNodeMarkup(2,undefined,{...ed.state.doc.nodeAt(2).attrs,scriptNote:'edited while uploading'}));
   ed.view.dispatch(ed.state.tr.setSelection(NodeSelection.create(ed.state.doc,3)));
-  finish({src:'replacement.png',assetPath:'editor-assets/5678.png',alt:'Replacement'});
+  finish({imageId:'upload-id',src:'replacement.png',assetPath:'editor-assets/5678.png',alt:'Replacement'});
   assert.equal(await pending,true);
   assert.equal(ed.state.doc.nodeAt(2).attrs.src,'replacement.png');
   assert.equal(ed.state.doc.nodeAt(2).attrs.scriptNote,'edited while uploading');
+  assert.equal(ed.state.doc.nodeAt(2).attrs.imageId,'first-image');
   assert.equal(ed.state.doc.nodeAt(3).attrs.scriptNote,'other');
 });
 test('deleting an image during upload does not transfer its note or replacement to the next image',async()=>{

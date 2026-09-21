@@ -46,7 +46,7 @@ export const Carousel=Node.create({
   name:'carousel',group:'block',content:'image*',atom:true,isolating:true,draggable:true,selectable:true,
   addAttributes(){return {id:{default:null,parseHTML:el=>el.getAttribute('data-carousel-id')||crypto.randomUUID(),renderHTML:()=>({})}};},
   parseHTML(){return [{tag:'[data-editor-carousel]',getContent:(el,schema)=>{
-    const images=Array.from((el as HTMLElement).querySelectorAll('img')).map(img=>schema.nodes.image.create({src:img.getAttribute('src')||'',alt:img.getAttribute('alt')||'',caption:img.closest('[data-carousel-slide]')?.querySelector('figcaption')?.textContent||img.getAttribute('data-caption')||''}));
+    const images=Array.from((el as HTMLElement).querySelectorAll('img')).map(img=>schema.nodes.image.create({imageId:img.getAttribute('data-image-id'),src:img.getAttribute('src')||'',alt:img.getAttribute('alt')||'',caption:img.closest('[data-carousel-slide]')?.querySelector('figcaption')?.textContent||img.getAttribute('data-caption')||''}));
     return schema.nodes.carousel.create(null,images).content;
   }}];},
   renderHTML({node,HTMLAttributes}){return ['div',mergeAttributes(HTMLAttributes,{'data-editor-carousel':'','data-carousel-id':node.attrs.id}),0];},
