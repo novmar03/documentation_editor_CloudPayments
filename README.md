@@ -69,9 +69,9 @@ Carousel content is an ordered array of ordinary `image` child nodes. Single ima
 
 Published images use a fixed responsive frame with `object-fit: contain`. The shared runtime provides previous/next arrows, a live slide counter, horizontal touch swipes and arrow-key navigation, without automatic playback. It is used in preview, exported HTML, the standalone documentation reader and Docusaurus. Page publication installs the runtime and preserves it in the standalone HTML template for future builds. Empty carousels remain in drafts but are omitted from published output.
 
-# Editor-only image notes
+# Image identity and draft compatibility
 
-Every image has a stable `imageId`, retained when moving or replacing it. Ordinary page drafts still use `editor-data/pages/<pageId>.json` on the existing `documentation-drafts` branch, but contain no `scriptNote` values. Notes live separately in `editor-data/image-notes/<pageId>.json`, keyed by `imageId`; English uses `editor-data/en/` for both paths. Opening a page merges those notes into its image nodes for the unchanged note UI. Draft and note updates share one Git commit with non-forced branch updates and revision checks. Local recovery also uses separate IndexedDB stores. Legacy inline notes migrate on the next save, and legacy image IDs match across base64 and published file URLs.
+Every image keeps its stable `imageId` when moved or replaced. Drafts continue to use `editor-data/pages/<pageId>.json` on `documentation-drafts`; English uses `editor-data/en/pages/`. Each save checks the draft's revision and updates the branch without force. Images, captions, alt text, dimensions, alignment and carousel order use the existing page content model.
 
 
-The publication boundary strips `scriptNote` and private image asset references from public page data, including nested carousel images. It also cleans older entries in both locale overlays and the embedded reader data when publishing a page. Only the non-sensitive image ID crosses into public JSON and HTML to preserve identity on reimport; note values never do. Access to editor-only note files follows the GitHub repository's visibility and permissions.
+Retired image-note fields in older drafts and snapshots are ignored on load and omitted on save and publication. The editor no longer reads or writes separate note files. IndexedDB version 3 removes the retired note store while preserving the drafts store. Existing Git history remains available; restoring an older version restores its content, not its retired fields.

@@ -1,7 +1,8 @@
 import type {Publisher} from './publish';
 import type {Draft} from './repository';
 import type {DocNode} from './document';
-import {ensureImageIds} from './image-notes';
+import {ensureImageIds} from './image-identity';
+import {readDraft} from './draft-data';
 import {DOCS_URL,DOCS_ROUTING} from './config';
 
 export function editorImageUrls(source:DocNode){
@@ -23,5 +24,5 @@ export async function loadPublishedPage(pub:Publisher,id:string,locale:'ru'|'en'
   if(!page)throw new Error('Для этой страницы ещё нет опубликованной версии на выбранном языке');
   const saved=overlay?JSON.parse(overlay.content)[id]:null;
   const content=await ensureImageIds(saved?.content&&saved.html===page.html?saved.content:parse(page.html));
-  return {id,locale,title:page.title,content:editorImageUrls(content),baseHtml:page.html,publishedHtml:page.html,updated:new Date().toISOString()};
+  return readDraft({id,locale,title:page.title,content:editorImageUrls(content),baseHtml:page.html,publishedHtml:page.html,updated:new Date().toISOString()});
 }

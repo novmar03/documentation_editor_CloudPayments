@@ -16,7 +16,8 @@ assert.equal((await repo.load('tech/api','en')).locale,'en');
 await repo.save(await repo.load('tech/api','en'));
 await repo.history('tech/api','en');await repo.revision('tech/api',memory.head,'en');
 assert.ok(requests.filter(r=>r.path.startsWith('/contents/')||r.path.startsWith('/commits?')).every(r=>decodeURIComponent(r.path).includes('editor-data/en/')));
-assert.ok(memory.json(repo.notesPath('tech/api','en')));
+assert.ok(memory.json(repo.draftPath('tech/api','en')));
+assert.ok(requests.filter(r=>r.path==='/git/trees').every(r=>r.body.tree.every(entry=>entry.path===repo.draftPath('tech/api','en'))));
 const original={groups:[{id:'tech',items:[{id:'tech/api',title:'Русское название'}]}],pages:{'tech/api':{id:'tech/api',title:'Русское название',html:'<p>Русский текст</p>',toc:[],group:'tech'}}};
 const files={
  'index.html':'<script id="document-data" type="application/json">'+JSON.stringify(original)+'</script>',

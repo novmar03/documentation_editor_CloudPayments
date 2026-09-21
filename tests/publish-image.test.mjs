@@ -1,12 +1,8 @@
 import assert from 'node:assert/strict';
 import {Publisher} from '../lib/publish.ts';
-import {storedDocument} from '../lib/repository.ts';
 import {renderDocument} from '../lib/document.ts';
 import {preparePublishedDocument,normalizePublishedImages} from '../lib/image-assets.ts';
-const note='@startuml\nAlice -> Bob: Проверка\n@enduml';
-const content={type:'doc',content:[{type:'image',attrs:{src:'data:image/png;base64,'+'A'.repeat(2*1024*1024),alt:'test',scriptNote:note}}]};
-assert.equal(storedDocument(content).content[0].attrs.scriptNote,note);
-assert.ok(!renderDocument(content).includes('@startuml'));
+const content={type:'doc',content:[{type:'image',attrs:{src:'data:image/png;base64,'+'A'.repeat(2*1024*1024),alt:'test'}}]};
 const publisher=new Publisher({provider:'github',project:'test/docs',branch:'main',host:'',token:'test'});
 const data={pages:{test:{html:'old'}},groups:[]};
 const files={'index.html':`<script id="document-data" type="application/json">${JSON.stringify(data)}</script>`,'scripts/export-html.py':'EDITOR_PAGES_FILE','sidebars.js':'editorPagesPath'};
@@ -36,11 +32,7 @@ for(const r of requests.filter(r=>r.path==='/git/blobs'&&r.body.encoding==='utf-
 const prepared=await preparePublishedDocument({type:'doc',content:[content.content[0],content.content[0]]});
 assert.equal(prepared.assets.size,1);
 assert.equal(await normalizePublishedImages(renderDocument(content)),result.html);
-assert.equal(prepared.doc.content[0].attrs.scriptNote,undefined);
-for(const r of requests.filter(r=>r.path==='/git/blobs'&&r.body.encoding==='utf-8')){
- assert.ok(!r.body.content.includes('scriptNote'));
- assert.ok(!r.body.content.includes('@startuml'));
-}
+assert.equal(prepared.doc.content[0].attrs.alt,'test');
 await assert.rejects(()=>preparePublishedDocument({type:'doc',content:[{type:'image',attrs:{src:'',assetPath:'editor-assets/test.png'}}]}),/Изображение не загружено/);
 assert.equal(requests.at(-1).body.force,false);
 // Existing drafts remain publishable after the one-time URL migration.

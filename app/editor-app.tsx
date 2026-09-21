@@ -24,7 +24,7 @@ import {DocNode,normalizeHeadings,headings,moveSection,renderDocument,safeLink,t
 import {Repository,RepoConfig,Draft,storedDocument} from '@/lib/repository';
 import {replaceSelectedImage} from '@/lib/replace-image';
 import {cacheDraft,recoverDraft} from '@/lib/recovery';
-import {ensureImageIds,imageIds} from '@/lib/image-notes';
+import {ensureImageIds} from '@/lib/image-identity';
 import {loadPublishedPage,editorImageUrls} from '@/lib/published-page';
 import {Publisher} from '@/lib/publish';
 import {selectedColumnWidth,setColumnWidth} from '@/lib/columns';
@@ -89,9 +89,8 @@ export default function EditorApp(){
     try{
       const cached=await recoverDraft(id,locale).catch(()=>null);
       let draft=repoRef.current?await repoRef.current.load(id,locale):null;
-      const notes=repoRef.current?await repoRef.current.notes(id,locale):null;
-      const recovered=!forceRemote&&cached&&(!notes?.state.discardedAt||cached.updated>notes.state.discardedAt)&&(!draft||cached.updated>draft.updated)?cached:null;
-      if(recovered)draft={...recovered,commit:repoRef.current?draft?.commit:recovered.commit,notesCommit:notes?.sha??recovered.notesCommit,publishedImageIds:notes?.state.publishedImageIds??recovered.publishedImageIds};
+      const recovered=!forceRemote&&cached&&(!draft||cached.updated>draft.updated)?cached:null;
+      if(recovered)draft={...recovered,commit:repoRef.current?draft?.commit:recovered.commit};
       if(draft&&repoRef.current)draft={...draft,content:await repoRef.current.hydrate(draft.content)};
       const item=pages[id];dirty.current=recovered?1:0;savedCounter.current=0;
       let initialHtml:string|undefined;
@@ -99,8 +98,7 @@ export default function EditorApp(){
         const pub=new Publisher({provider:'github',project:DOCS_REPO,branch:'main',host:'https://github.com',token:repoRef.current.config.token});
         try{
           const published=await loadPublishedPage(pub,id,locale,html=>generateJSON(html,extensions()) as DocNode);
-          if(!draft)draft=await repoRef.current.attachNotes(published);
-          draft.publishedImageIds=imageIds(published.content);
+          if(!draft)draft=published;
         }catch(e){if(!errorText(e).includes('ещё нет опубликованной версии'))throw e;}
       }
       if(!draft&&locale==='en'){
@@ -140,7 +138,7 @@ export default function EditorApp(){
       const docs=new Repository({project:DOCS_REPO,defaultBranch:'main',token});await docs.connect();
       repoRef.current=repo;setRepository(repo);setToken('');setConnectionOpen(false);toast.success('GitHub подключён');
       if(working.current){const remote=await repo.load(working.current.id,working.current.locale);if(remote){
-        if(dirty.current>savedCounter.current){working.current.commit=remote.commit;working.current.notesCommit=remote.notesCommit;working.current.publishedImageIds=remote.publishedImageIds;toast.info('Найден черновик в GitHub. Сравните версии в истории перед публикацией.');}
+        if(dirty.current>savedCounter.current){working.current.commit=remote.commit;toast.info('Найден черновик в GitHub. Сравните версии в истории перед публикацией.');}
         else{await openPage(working.current.id,true,working.current.locale||'ru');return;}
       }else if(dirty.current===savedCounter.current){await openPage(working.current.id,true,working.current.locale||'ru');return;}await saveRef.current();}
     }catch(e){toast.error(errorText(e));}finally{setConnecting(false);}
@@ -153,7 +151,7 @@ export default function EditorApp(){
     try{
       if(!(await saveRef.current()))throw new Error('Сначала сохраните черновик');
       const pub=new Publisher({provider:'github',project:DOCS_REPO,branch:'main',host:'https://github.com',token:repository.config.token});
-      const result=await pub.publish(working.current,currentContent.current);working.current.publishedHtml=result.html;working.current.publishedImageIds=imageIds(currentContent.current);dirty.current++;await saveRef.current();setPublication(result.sha);setPublishOpen(false);toast.success('Изменения отправлены. GitHub обновляет сайт документации.');
+      const result=await pub.publish(working.current,currentContent.current);working.current.publishedHtml=result.html;dirty.current++;await saveRef.current();setPublication(result.sha);setPublishOpen(false);toast.success('Изменения отправлены. GitHub обновляет сайт документации.');
     }catch(e){toast.error(errorText(e));}finally{setPublishing(false);}
   }
   function download(){if(!working.current)return;const html='<!doctype html><html lang="'+(working.current.locale||'ru')+'"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+working.current.title.replace(/[<>]/g,'')+'</title><style>'+previewStyles+'</style><body><main><h1>'+working.current.title.replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</h1>'+renderDocument(currentContent.current)+'</main><script>'+copyScript+carouselScript+'</script></body></html>';const url=URL.createObjectURL(new Blob([html],{type:'text/html;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download=draftKey(working.current.id,working.current.locale).replace(/\//g,'-')+'.html';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
@@ -254,7 +252,7 @@ function BlockSettings({editor,tick,repository,onConnect}:{editor:Editor;tick:nu
     {selectedType==='heading'&&<><p className="form-help">Уровень и порядок раздела можно изменить в оглавлении слева.</p><Label>Якорь раздела</Label><code className="anchor-value">#{attrs.id}</code></>}
     {selectedType==='callout'&&<><Label>Тип блока</Label><Choice label="Тип уведомления" value={attrs.kind||'info'} onChange={v=>update('kind',v)} options={[['info','Информация'],['attention','Внимание']]}/></>}
     {selectedType==='docButton'&&<><Field label="Текст кнопки" value={attrs.label||''} onChange={v=>update('label',v)}/><Field label="Ссылка" value={attrs.href||''} onChange={v=>update('href',v)} placeholder="https://"/><div className="settings-two"><NumberField label="Ширина, px" value={attrs.width||240} min={80} max={1000} onChange={v=>update('width',v)}/><NumberField label="Высота, px" value={attrs.height||56} min={32} max={200} onChange={v=>update('height',v)}/></div><NumberField label="Размер текста, px" value={attrs.fontSize||18} min={12} max={40} onChange={v=>update('fontSize',v)}/><label className="switch-field">На всю ширину<Switch checked={!!attrs.fullWidth} onCheckedChange={v=>update('fullWidth',v)}/></label><Label>Расположение</Label><Choice label="Расположение кнопки" value={attrs.align||'center'} onChange={v=>update('align',v)} options={[['left','Слева'],['center','По центру'],['right','Справа']]}/></>}
-    {selectedType==='image'&&<><Field label="Описание изображения" value={attrs.alt||''} onChange={v=>update('alt',v)}/><label className="property-field"><span>Скрипт / заметка</span><textarea aria-label="Скрипт / заметка" value={attrs.scriptNote||''} onChange={e=>update('scriptNote',e.target.value)} rows={10} spellCheck={false} style={{width:'100%',resize:'vertical',padding:10,border:'1px solid #ccd6e4',borderRadius:6,fontFamily:'monospace',fontSize:13}} placeholder="Вставьте исходный скрипт изображения"/></label><Button type="button" variant="outline" disabled={!attrs.scriptNote} onClick={async()=>{try{await navigator.clipboard.writeText(attrs.scriptNote||'');toast.success('Скрипт скопирован целиком');}catch{toast.error('Не удалось скопировать. Выделите текст заметки и скопируйте вручную.');}}}>Скопировать всё</Button><p className="form-help">Заметка сохраняется вместе с изображением. В документации отображается только изображение.</p><div className="slider-label"><Label>Ширина</Label><span>{attrs.width||100}%</span></div><Slider min={10} max={100} step={1} value={[Number(attrs.width)||100]} onValueChange={([v])=>update('width',v)}/><Choice label="Расположение изображения" value={attrs.align||'center'} onChange={v=>update('align',v)} options={[['left','Слева'],['center','По центру'],['right','Справа']]}/><Button variant="outline" onClick={()=>fileRef.current?.click()}><ImagePlus size={16}/>Заменить изображение</Button></>}
+    {selectedType==='image'&&<><Field label="Описание изображения" value={attrs.alt||''} onChange={v=>update('alt',v)}/><div className="slider-label"><Label>Ширина</Label><span>{attrs.width||100}%</span></div><Slider min={10} max={100} step={1} value={[Number(attrs.width)||100]} onValueChange={([v])=>update('width',v)}/><Choice label="Расположение изображения" value={attrs.align||'center'} onChange={v=>update('align',v)} options={[['left','Слева'],['center','По центру'],['right','Справа']]}/><Button variant="outline" onClick={()=>fileRef.current?.click()}><ImagePlus size={16}/>Заменить изображение</Button></>}
     {editor.isActive('table')&&<><NumberField label="Ширина столбца, px" value={selectedColumnWidth(editor)} min={60} max={1200} onChange={v=>setColumnWidth(editor,v)}/><p className="form-help">Выберите ячейку нужного столбца. Ширину также можно менять, перетаскивая границу.</p><p className="form-help">Выберите ячейку таблицы, затем действие.</p><div className="table-actions">{[['Строка выше',()=>editor.chain().focus().addRowBefore().run()],['Строка ниже',()=>editor.chain().focus().addRowAfter().run()],['Столбец слева',()=>editor.chain().focus().addColumnBefore().run()],['Столбец справа',()=>editor.chain().focus().addColumnAfter().run()],['Удалить строку',()=>editor.chain().focus().deleteRow().run()],['Удалить столбец',()=>editor.chain().focus().deleteColumn().run()],['Объединить ячейки',()=>editor.chain().focus().mergeCells().run()],['Разделить ячейку',()=>editor.chain().focus().splitCell().run()]].map(([label,action])=><Button key={label as string} variant="outline" size="sm" onClick={action as ()=>void}>{label as string}</Button>)}</div><Button variant="outline" size="sm" onClick={()=>editor.chain().focus().toggleHeaderRow().run()}>Строка заголовков</Button></>}
     {['paragraph','heading','listItem'].includes(selectedType)&&<><Label>Выравнивание</Label><div className="align-controls"><IconButton label="Слева" active={editor.isActive({textAlign:'left'})} onClick={()=>editor.chain().focus().setTextAlign('left').run()}><AlignLeft size={17}/></IconButton><IconButton label="По центру" active={editor.isActive({textAlign:'center'})} onClick={()=>editor.chain().focus().setTextAlign('center').run()}><AlignCenter size={17}/></IconButton><IconButton label="Справа" active={editor.isActive({textAlign:'right'})} onClick={()=>editor.chain().focus().setTextAlign('right').run()}><AlignRight size={17}/></IconButton></div></>}
     <div className="settings-divider"/><Button variant="outline" disabled={uploading} onClick={()=>fileRef.current?.click()}>{uploading?<Loader2 size={16} className="spin"/>:<ImagePlus size={16}/>}Загрузить фото / GIF</Button><p className="form-help">PNG, JPG, WebP или GIF, до 5 МБ.</p><Button variant="ghost" onClick={()=>setImageDialog(true)}>Изображение по ссылке</Button>
