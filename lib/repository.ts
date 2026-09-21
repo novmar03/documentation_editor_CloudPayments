@@ -1,6 +1,6 @@
 import {DocNode} from './document';
 import type {Locale} from './locales';
-import {ensureImageIds,mergeImageNotes,collectImageNotes,stripImageNotes,imageIds,images,emptyImageNotes,type ImageNotes} from './image-notes';
+import {ensureImageIds,mergeImageNotes,collectImageNotes,stripImageNotes,images,emptyImageNotes,type ImageNotes} from './image-notes';
 export type RepoConfig={project:string;defaultBranch:string;token:string};
 export const DRAFT_BRANCH='documentation-drafts';
 export type Draft={id:string;locale?:Locale;title:string;content:DocNode;updated:string;baseHtml:string;publishedHtml?:string;commit?:string;notesCommit?:string|null;publishedImageIds?:string[];discardedAt?:string};
@@ -42,7 +42,7 @@ export class Repository {
     const file=await this.optionalFile(this.draftPath(id,locale),head.object.sha);
     return file?this.attachNotes({...JSON.parse(decodeText(file.content)),locale,commit:file.sha},head.object.sha):null;
   }
-  private async writeState(draft:Draft,content:DocNode,discard=false):Promise<Draft>{
+  private async writeState(draft:Draft,content:DocNode):Promise<Draft>{
     await this.ensureBranch();const head=(await this.request('/git/ref/heads/'+DRAFT_BRANCH)).object.sha;
     const path=this.draftPath(draft.id,draft.locale),notePath=this.notesPath(draft.id,draft.locale);
     const [existing,notes,commit]=await Promise.all([this.optionalFile(path,head),this.notes(draft.id,draft.locale,head),this.request('/git/commits/'+head)]);
@@ -53,30 +53,18 @@ export class Repository {
       const legacy=await ensureImageIds(JSON.parse(decodeText(existing.content)).content,p=>this.image(p));
       for(const node of images(legacy))if(node.attrs?.scriptNote&&!Object.hasOwn(notes.state.notes,node.attrs.imageId))notes.state.notes[node.attrs.imageId]=node.attrs.scriptNote;
     }
-    let state=collectImageNotes(notes.state,normalized,draft.publishedImageIds??notes.state.publishedImageIds);
-    if(discard){
-      // Keep the latest unsaved note edits, but only for images in the published page.
-      const edits=await ensureImageIds(draft.content,p=>this.image(p));
-      const all=collectImageNotes(notes.state,edits,imageIds(normalized));
-      state={notes:Object.fromEntries(imageIds(normalized).map(id=>[id,all.notes[id]||''])),publishedImageIds:imageIds(normalized),discardedAt:new Date().toISOString()};
-    }
+    const state=collectImageNotes(notes.state,normalized,draft.publishedImageIds??notes.state.publishedImageIds);
     const payload={...draft,content:storedDocument(stripImageNotes(normalized))};
     delete payload.commit;delete payload.notesCommit;delete payload.publishedImageIds;delete payload.discardedAt;
     const noteBlob=await this.request('/git/blobs',{method:'POST',body:JSON.stringify({encoding:'utf-8',content:JSON.stringify(state)})});
     const entries:any[]=[{path:notePath,mode:'100644',type:'blob',sha:noteBlob.sha}];
-    let draftSha:string|undefined;
-    if(discard){if(existing)entries.push({path,mode:'100644',type:'blob',sha:null});}
-    else{const blob=await this.request('/git/blobs',{method:'POST',body:JSON.stringify({encoding:'utf-8',content:JSON.stringify(payload)})});draftSha=blob.sha;entries.push({path,mode:'100644',type:'blob',sha:blob.sha});}
+    const blob=await this.request('/git/blobs',{method:'POST',body:JSON.stringify({encoding:'utf-8',content:JSON.stringify(payload)})});const draftSha=blob.sha;entries.push({path,mode:'100644',type:'blob',sha:blob.sha});
     const tree=await this.request('/git/trees',{method:'POST',body:JSON.stringify({base_tree:commit.tree.sha,tree:entries})});
-    const next=await this.request('/git/commits',{method:'POST',body:JSON.stringify({message:(discard?'Удалить черновик: ':'Черновик: ')+draft.title+' [skip ci]',tree:tree.sha,parents:[head]})});
+    const next=await this.request('/git/commits',{method:'POST',body:JSON.stringify({message:'Черновик: '+draft.title+' [skip ci]',tree:tree.sha,parents:[head]})});
     await this.request('/git/refs/heads/'+DRAFT_BRANCH,{method:'PATCH',body:JSON.stringify({sha:next.sha,force:false})});
     return {...payload,content:mergeImageNotes(normalized,state),commit:draftSha,notesCommit:noteBlob.sha,publishedImageIds:state.publishedImageIds,discardedAt:state.discardedAt};
   }
   async save(draft:Draft,expectedSha=draft.commit):Promise<Draft>{return this.writeState({...draft,commit:expectedSha},draft.content);}
-  async deleteDraft(draft:Draft,published:Draft):Promise<Draft>{
-    const restored=await this.writeState(draft,published.content,true);
-    return {...published,content:restored.content,notesCommit:restored.notesCommit,publishedImageIds:restored.publishedImageIds,discardedAt:restored.discardedAt};
-  }
   async history(id:string,locale:Locale='ru'){await this.ensureBranch();return this.request('/commits?sha='+DRAFT_BRANCH+'&path='+encodeURIComponent(this.draftPath(id,locale))+'&per_page=30');}
   async revision(id:string,sha:string,locale:Locale='ru'){const file=await this.file(this.draftPath(id,locale),sha);return this.attachNotes({...JSON.parse(decodeText(file.content)),locale},sha);}
   async upload(file:File){

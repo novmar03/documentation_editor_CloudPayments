@@ -23,7 +23,7 @@ import {extensions,languages} from './editor-extensions';
 import {DocNode,normalizeHeadings,headings,moveSection,renderDocument,safeLink,textOf} from '@/lib/document';
 import {Repository,RepoConfig,Draft,storedDocument} from '@/lib/repository';
 import {replaceSelectedImage} from '@/lib/replace-image';
-import {cacheDraft,recoverDraft,deleteCachedDraft} from '@/lib/recovery';
+import {cacheDraft,recoverDraft} from '@/lib/recovery';
 import {ensureImageIds,imageIds} from '@/lib/image-notes';
 import {loadPublishedPage,editorImageUrls} from '@/lib/published-page';
 import {Publisher} from '@/lib/publish';
@@ -52,7 +52,6 @@ export default function EditorApp(){
   const [saveState,setSaveState]=useState<SaveState>('ready'),[saveError,setSaveError]=useState(''),[savedAt,setSavedAt]=useState('');
   const [preview,setPreview]=useState(false),[historyOpen,setHistoryOpen]=useState(false),[history,setHistory]=useState<any[]>([]),[historyLoading,setHistoryLoading]=useState(false);
   const [publishOpen,setPublishOpen]=useState(false),[publishing,setPublishing]=useState(false),[restoreCandidate,setRestoreCandidate]=useState<Draft|null>(null);
-  const [deleteDraftOpen,setDeleteDraftOpen]=useState(false),[deletingDraft,setDeletingDraft]=useState(false),discarding=useRef(false);
   const [settingsOpen,setSettingsOpen]=useState(false),[editor,setEditor]=useState<Editor|null>(null),[tick,setTick]=useState(0),[collapsed,setCollapsed]=useState<Set<string>>(new Set());
   const [titles,setTitles]=useState<Record<string,string>>({}),[publication,setPublication]=useState<string|null>(null);
   const working=useRef<Draft|null>(null),dirty=useRef(0),savedCounter=useRef(0),inflight=useRef<Promise<boolean>|null>(null),timer=useRef<ReturnType<typeof setTimeout>|null>(null);
@@ -61,7 +60,6 @@ export default function EditorApp(){
   const selectedHeading=editor?.state.selection.$from.parent.type.name==='heading'?editor.state.selection.$from.parent.attrs.id:null;
   const outline=editor?headings(editor.getJSON() as DocNode):[];
   async function save(remote=true):Promise<boolean>{
-    if(discarding.current)return false;
     if(inflight.current){await inflight.current;if(dirty.current===savedCounter.current)return true;return save(remote);}
     if(!working.current)return true;
     if(dirty.current===savedCounter.current)return true;
@@ -79,12 +77,11 @@ export default function EditorApp(){
   }
   const saveRef=useRef(save);saveRef.current=save;
   function changed(doc:DocNode,title?:string){
-    if(discarding.current)return;
     if(!working.current)return;currentContent.current=doc;working.current={...working.current,content:doc,...(title!==undefined?{title}:{})};dirty.current++;setSaveState('dirty');setTick(t=>t+1);
     if(timer.current)clearTimeout(timer.current);timer.current=setTimeout(()=>{void saveRef.current();},1800);
   }
   async function openPage(id:string,forceRemote=false,locale:Locale=loaded?.locale||'ru'){
-    if(!pages[id]||opening.current||publishing||discarding.current)return;
+    if(!pages[id]||opening.current||publishing)return;
     opening.current=true;
     if(timer.current)clearTimeout(timer.current);
     if(working.current&&!(await saveRef.current())){toast.error('Сначала сохраните текущие изменения или скачайте HTML');opening.current=false;return;}
@@ -149,27 +146,9 @@ export default function EditorApp(){
     }catch(e){toast.error(errorText(e));}finally{setConnecting(false);}
   }
   async function showHistory(){if(!repository){setConnectionOpen(true);return;}setHistoryOpen(true);setHistoryLoading(true);try{setHistory(await repository.history(loaded!.id,loaded!.locale));}catch(e){toast.error(errorText(e));}finally{setHistoryLoading(false);}}
-  async function deleteDraft(){
-    if(!repository||!working.current||discarding.current)return;
-    discarding.current=true;setDeletingDraft(true);if(timer.current)clearTimeout(timer.current);
-    editor?.setEditable(false);
-    try{
-      if(inflight.current&&!(await inflight.current))throw new Error('Не удалось завершить сохранение. Черновик не удалён.');
-      const current={...working.current!,content:currentContent.current};
-      const pub=new Publisher({provider:'github',project:DOCS_REPO,branch:'main',host:'https://github.com',token:repository.config.token});
-      const published=await loadPublishedPage(pub,current.id,current.locale||'ru',html=>generateJSON(html,extensions()) as DocNode);
-      const restored=await repository.deleteDraft(current,published);
-      working.current=restored;currentContent.current=restored.content;dirty.current=0;savedCounter.current=0;
-      await deleteCachedDraft(current.id,current.locale,restored).catch(()=>toast.info('Черновик удалён из GitHub. Локальная копия будет проигнорирована при следующем открытии.'));
-      setLoaded({id:restored.id,locale:restored.locale||'ru',title:restored.title,content:restored.content,draft:restored});
-      setTitles(old=>({...old,[draftKey(restored.id,restored.locale)]:restored.title}));setSaveState('ready');setSavedAt('');setSaveError('');setPublication(null);setCollapsed(new Set());setDeleteDraftOpen(false);
-      toast.success('Черновик удалён. Опубликованная версия и заметки восстановлены.');
-    }catch(e){toast.error(errorText(e));}finally{discarding.current=false;setDeletingDraft(false);editor?.setEditable(!preview);}
-  }
   async function restore(sha:string){try{const draft=await repository!.revision(loaded!.id,sha,loaded!.locale);setRestoreCandidate({...draft,content:await repository!.hydrate(draft.content)});}catch(e){toast.error(errorText(e));}}
   function applyRestore(){if(!restoreCandidate||!editor)return;editor.commands.setContent(restoreCandidate.content);working.current!.title=restoreCandidate.title;setLoaded(old=>old?{...old,title:restoreCandidate.title}:old);changed(editor.getJSON() as DocNode,restoreCandidate.title);setRestoreCandidate(null);setHistoryOpen(false);toast.success('Версия восстановлена в черновик');}
   async function publish(){
-    if(discarding.current)return;
     if(!repository||!working.current)return;setPublishing(true);
     try{
       if(!(await saveRef.current()))throw new Error('Сначала сохраните черновик');
@@ -194,7 +173,7 @@ export default function EditorApp(){
   }
   const activeOutline=outline.find(h=>h.id===selectedHeading);
   const statusText={ready:'Исходная страница',dirty:'Есть изменения',saving:'Сохраняем…',saved:'Сохранено в GitHub',local:'Копия на устройстве',error:'Не удалось сохранить'}[saveState];
-  const pageSettings=<div className="page-language-settings" style={{padding:20,borderBottom:'1px solid #e3e8f0',display:'grid',gap:10}}><strong>Настройки страницы</strong><span className="form-help">Язык: {loaded?.locale==='en'?'English':'Русский'}</span><Button variant="outline" disabled={loading||publishing} onClick={()=>{if(loaded)void openPage(loaded.id,false,loaded.locale==='en'?'ru':'en');}}><Globe size={16}/>{loaded?.locale==='en'?'Русская версия':'Английская версия'}</Button><p className="form-help">У каждой версии отдельный черновик и публикация.</p><Button variant="outline" disabled={loading||publishing||deletingDraft} onClick={()=>repository?setDeleteDraftOpen(true):setConnectionOpen(true)}><Trash2 size={16}/>Удалить черновик</Button></div>;
+  const pageSettings=<div className="page-language-settings" style={{padding:20,borderBottom:'1px solid #e3e8f0',display:'grid',gap:10}}><strong>Настройки страницы</strong><span className="form-help">Язык: {loaded?.locale==='en'?'English':'Русский'}</span><Button variant="outline" disabled={loading||publishing} onClick={()=>{if(loaded)void openPage(loaded.id,false,loaded.locale==='en'?'ru':'en');}}><Globe size={16}/>{loaded?.locale==='en'?'Русская версия':'Английская версия'}</Button><p className="form-help">У каждой версии отдельный черновик и публикация.</p></div>;
   const properties=editor?<BlockSettings editor={editor} tick={tick} repository={repository} onConnect={()=>setConnectionOpen(true)}/>:null;
   return <SidebarProvider style={{'--sidebar-width':'300px'} as CSSProperties}>
     <Sidebar className="editor-sidebar"><SidebarHeader className="brand-header"><img src="./cloudpayments-logo.svg" alt="CloudPayments"/><span>Редактор документации</span></SidebarHeader>
@@ -219,7 +198,6 @@ export default function EditorApp(){
     <Dialog open={historyOpen} onOpenChange={setHistoryOpen}><DialogContent><DialogHeader><DialogTitle>История страницы</DialogTitle><DialogDescription>{loaded?.title}. Восстановление создаст новый черновик.</DialogDescription></DialogHeader><div className="history-list">{historyLoading?<Loader2 className="spin"/>:history.length===0?<p>История появится после первого сохранения в GitHub.</p>:history.map(row=><div className="history-row" key={row.sha}><div><strong>{new Date(row.commit.author.date).toLocaleString('ru')}</strong><span>{row.commit.message.split('\n')[0].replace(' [skip ci]','')}</span></div><Button size="sm" variant="outline" onClick={()=>void restore(row.sha)}>Восстановить</Button></div>)}</div></DialogContent></Dialog>
     <AlertDialog open={!!restoreCandidate} onOpenChange={v=>{if(!v)setRestoreCandidate(null);}}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Восстановить эту версию?</AlertDialogTitle><AlertDialogDescription>Содержимое текущего черновика будет заменено. Сохранённые версии останутся в истории.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Отмена</AlertDialogCancel><AlertDialogAction onClick={applyRestore}>Восстановить</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
     <Dialog open={publishOpen} onOpenChange={setPublishOpen}><DialogContent><DialogHeader><DialogTitle>Опубликовать страницу?</DialogTitle><DialogDescription>На сайте документации обновится {loaded?.locale==='en'?'английская':'русская'} версия страницы «{loaded?.title}».</DialogDescription></DialogHeader><div className="publish-summary"><FileText size={22}/><div><strong>{loaded?.title}</strong><span>{outline.length} заголовков · {DOCS_REPO}</span></div></div><p>Перед публикацией проверьте страницу в предпросмотре. Редактор сохранит историю и отправит обновление на сайт.</p><DialogFooter><Button variant="outline" onClick={()=>{setPublishOpen(false);setPreview(true);}}>Предпросмотр</Button><Button disabled={publishing} onClick={()=>void publish()}>{publishing?<Loader2 size={16} className="spin"/>:<Upload size={16}/>}Опубликовать</Button></DialogFooter></DialogContent></Dialog>
-    <AlertDialog open={deleteDraftOpen} onOpenChange={v=>{if(!deletingDraft)setDeleteDraftOpen(v);}}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Удалить черновик?</AlertDialogTitle><AlertDialogDescription>Все неопубликованные изменения этой языковой версии будут удалены. Загрузится последняя опубликованная страница. Заметки её изображений сохранятся; заметки изображений, добавленных только в черновик, будут удалены.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={deletingDraft}>Отмена</AlertDialogCancel><AlertDialogAction disabled={deletingDraft} onClick={e=>{e.preventDefault();void deleteDraft();}}>{deletingDraft?'Удаляем…':'Удалить черновик'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
     <Toaster theme="light" richColors position="bottom-right"/>
   </SidebarProvider>;
 }
