@@ -21,7 +21,7 @@ export function gitMemory(){
     if(path==='/git/commits'){const sha='commit-'+(++sequence);commits.set(sha,{tree:{sha:body.tree},parents:body.parents});return {sha};}
     if(path.startsWith('/git/commits/'))return commits.get(path.slice(13));
     if(path==='/git/refs/heads/documentation-drafts'){
-      assert.equal(body.force,false);if(commits.get(body.sha).parents[0]!==head)throw error(409);head=body.sha;return {};
+      assert.equal(body.force,false);if(commits.get(body.sha).parents[0]!==head)throw Object.assign(error(409),{githubMessage:'Reference update failed'});head=body.sha;return {};
     }
     if(path.startsWith('/commits?'))return [];
     throw new Error('Unexpected request '+path);

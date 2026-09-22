@@ -4,6 +4,13 @@ import {readDraft} from './draft-data';
 import {ensureImageIds} from './image-identity';
 export type RepoConfig={project:string;defaultBranch:string;token:string};
 export const DRAFT_BRANCH='documentation-drafts';
+const MAX_SAVE_ATTEMPTS=3;
+function isRefUpdateConflict(error:unknown){
+  const e=error as {status?:number;githubMessage?:string};
+  return (e?.status===409||e?.status===422)&&
+    !/protected|permission|denied|not authorized|forbidden/i.test(e.githubMessage||'')&&
+    /not a fast[- ]forward|non[- ]fast[- ]forward|reference update failed|cannot lock ref|^conflict$/i.test(e.githubMessage||'');
+}
 export type Draft={id:string;locale?:Locale;title:string;content:DocNode;updated:string;baseHtml:string;publishedHtml?:string;commit?:string};
 export const toBase64=(bytes:Uint8Array)=>{let s='';for(let i=0;i<bytes.length;i+=32768)s+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(s);};
 export const fromBase64=(s:string)=>Uint8Array.from(atob(s.replace(/\s/g,'')),c=>c.charCodeAt(0));
@@ -20,7 +27,11 @@ export class Repository {
   constructor(config:RepoConfig){this.config=normalizeConfig(config);}
   async request(path:string,options:RequestInit={}):Promise<any>{
     let response:Response;try{response=await fetch('https://api.github.com/repos/'+this.config.project+path,{...options,headers:{Authorization:'Bearer '+this.config.token,Accept:'application/vnd.github+json','Content-Type':'application/json',...options.headers}});}catch{throw new Error('Не удалось связаться с GitHub. Проверьте подключение к сети.');}
-    if(!response.ok){const e=new Error(response.status===401?'Токен GitHub недействителен или истёк':response.status===403?'У токена нет доступа к этому репозиторию':response.status===404?'Репозиторий или файл не найден':response.status===409||response.status===422?'Файл изменился в другом окне или защищён от записи. Ваши правки сохранены на устройстве.':`Ошибка GitHub (${response.status})`);Object.assign(e,{status:response.status});throw e;}
+    if(!response.ok){
+      const body=await response.json().catch(()=>null) as {message?:string;errors?:Array<string|{message?:string}>}|null;
+      const githubMessage=[body?.message,...(Array.isArray(body?.errors)?body.errors.map(item=>typeof item==='string'?item:item?.message):[])].filter(v=>typeof v==='string').join('; ');
+      const e=new Error(response.status===401?'Токен GitHub недействителен или истёк':response.status===403?'У токена нет доступа к этому репозиторию':response.status===404?'Репозиторий или файл не найден':response.status===409||response.status===422?'Файл изменился в другом окне или защищён от записи. Ваши правки сохранены на устройстве.':`Ошибка GitHub (${response.status})`);Object.assign(e,{status:response.status,githubMessage});throw e;
+    }
     return response.status===204?null:response.json();
   }
   async connect(){const project=await this.request('');this.config.defaultBranch=project.default_branch||this.config.defaultBranch||'main';if(project.permissions?.push===false)throw new Error('Для сохранения нужен доступ на запись в репозиторий');return project;}
@@ -34,19 +45,28 @@ export class Repository {
     return file?readDraft({...JSON.parse(decodeText(file.content)),locale,commit:file.sha}):null;
   }
   private async writeState(draft:Draft,content:DocNode):Promise<Draft>{
-    await this.ensureBranch();const head=(await this.request('/git/ref/heads/'+DRAFT_BRANCH)).object.sha;
+    await this.ensureBranch();
     const path=this.draftPath(draft.id,draft.locale);
-    const [existing,commit]=await Promise.all([this.optionalFile(path,head),this.request('/git/commits/'+head)]);
-    if((existing?.sha||undefined)!==draft.commit)throw new Error('Черновик изменился на другом устройстве. Откройте страницу заново перед сохранением.');
-    const normalized=await ensureImageIds(readDraft({...draft,content}).content,p=>this.image(p));
-    const payload={...readDraft(draft),content:storedDocument(normalized)};
-    delete payload.commit;
-    const blob=await this.request('/git/blobs',{method:'POST',body:JSON.stringify({encoding:'utf-8',content:JSON.stringify(payload)})});
-    const draftSha=blob.sha,entries=[{path,mode:'100644',type:'blob',sha:draftSha}];
-    const tree=await this.request('/git/trees',{method:'POST',body:JSON.stringify({base_tree:commit.tree.sha,tree:entries})});
-    const next=await this.request('/git/commits',{method:'POST',body:JSON.stringify({message:'Черновик: '+draft.title+' [skip ci]',tree:tree.sha,parents:[head]})});
-    await this.request('/git/refs/heads/'+DRAFT_BRANCH,{method:'PATCH',body:JSON.stringify({sha:next.sha,force:false})});
-    return {...payload,content:normalized,commit:draftSha};
+    for(let attempt=1;;attempt++){
+      const head=(await this.request('/git/ref/heads/'+DRAFT_BRANCH)).object.sha;
+      const [existing,commit]=await Promise.all([this.optionalFile(path,head),this.request('/git/commits/'+head)]);
+      if((existing?.sha||undefined)!==draft.commit)throw new Error('Черновик изменился на другом устройстве. Откройте страницу заново перед сохранением.');
+      const normalized=await ensureImageIds(readDraft({...draft,content}).content,p=>this.image(p));
+      const payload={...readDraft(draft),content:storedDocument(normalized)};
+      delete payload.commit;
+      const blob=await this.request('/git/blobs',{method:'POST',body:JSON.stringify({encoding:'utf-8',content:JSON.stringify(payload)})});
+      const draftSha=blob.sha,entries=[{path,mode:'100644',type:'blob',sha:draftSha}];
+      const tree=await this.request('/git/trees',{method:'POST',body:JSON.stringify({base_tree:commit.tree.sha,tree:entries})});
+      const next=await this.request('/git/commits',{method:'POST',body:JSON.stringify({message:'Черновик: '+draft.title+' [skip ci]',tree:tree.sha,parents:[head]})});
+      try{
+        await this.request('/git/refs/heads/'+DRAFT_BRANCH,{method:'PATCH',body:JSON.stringify({sha:next.sha,force:false})});
+      }catch(error){
+        // A branch race is safe to retry only after checking this page again.
+        if(attempt>=MAX_SAVE_ATTEMPTS||!isRefUpdateConflict(error))throw error;
+        continue;
+      }
+      return {...payload,content:normalized,commit:draftSha};
+    }
   }
   async save(draft:Draft,expectedSha=draft.commit):Promise<Draft>{return this.writeState({...draft,commit:expectedSha},draft.content);}
   async history(id:string,locale:Locale='ru'){await this.ensureBranch();return this.request('/commits?sha='+DRAFT_BRANCH+'&path='+encodeURIComponent(this.draftPath(id,locale))+'&per_page=30');}
