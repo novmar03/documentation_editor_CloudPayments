@@ -1,4 +1,4 @@
-import {validateNavigation,type NavigationGroup} from './structure';
+import {validateNavigation,documentationSettings,documentationSettingsPath,type DocumentationSettings,type NavigationGroup} from './structure';
 
 export const readerNavigation=String.raw`function visibleNavigation(groups,audience='all'){
  return groups.filter(g=>!g.hidden).map(g=>{
@@ -50,9 +50,11 @@ export function installStructureIndex(source:string){
   source+=`\nfunction renderNavigationItems(items,parentId){return items.filter(p=>p.parentId===parentId).map(p=><li key={p.id}>{p.type==='category'?<span>{p.title}</span>:<Link to={'/'+p.id+'/'}>{p.title}</Link>}{items.some(c=>c.parentId===p.id)&&<ul>{renderNavigationItems(items,p.id)}</ul>}</li>);}\n`;
   return source;
 }
-export function structureWrites(files:Record<string,string>,groups:NavigationGroup[],base:NavigationGroup[]){
+export function structureWrites(files:Record<string,string>,groups:NavigationGroup[],base:NavigationGroup[],settings:DocumentationSettings={showOverviewPage:true},baseSettings:DocumentationSettings={showOverviewPage:true}){
   validateNavigation(groups);
   const current=JSON.parse(files['src/components/navigation.json']);
+  const currentSettings=files[documentationSettingsPath]?JSON.parse(files[documentationSettingsPath]):{};
+  if(documentationSettings(currentSettings).showOverviewPage!==documentationSettings(baseSettings).showOverviewPage)throw new Error('Настройки структуры на сайте уже изменились. Загрузите актуальную структуру перед публикацией.');
   if(JSON.stringify(current)!==JSON.stringify(base))throw new Error('Структура на сайте уже изменилась. Сохраните свои правки и загрузите актуальную структуру перед публикацией.');
   const marker=/<script id="document-data" type="application\/json">([\s\S]*?)<\/script>/;
   const match=files['index.html'].match(marker);if(!match)throw new Error('Не найдены данные документации');
@@ -73,6 +75,8 @@ export function structureWrites(files:Record<string,string>,groups:NavigationGro
     if(data.translations?.en?.pages?.[p.id])data.translations.en.pages[p.id].group=g.id;
   }
   data.groups=groups;
+  data.settings={...currentSettings,...documentationSettings(settings)};
+  writes[documentationSettingsPath]=JSON.stringify(data.settings,null,2)+'\n';
   writes['src/components/navigation.json']=JSON.stringify(groups,null,2)+'\n';
   writes['index.html']=installStructureReader(files['index.html']).replace(marker,()=>'<script id="document-data" type="application/json">'+JSON.stringify(data).replace(/</g,'\\u003c')+'</script>');
   writes['src/offline-template.html']=installStructureReader(files['src/offline-template.html']);

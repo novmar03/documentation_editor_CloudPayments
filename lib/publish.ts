@@ -3,20 +3,21 @@ import {Draft,decodeText} from './repository';
 import {preparePublishedDocument,normalizePublishedImages} from './image-assets';
 import {installOfflineLinks,installNativeLinks} from './documentation-links';
 import {structurePaths,structureWrites} from './structure-publication';
-import type {NavigationGroup} from './structure';
+import {documentationSettingsPath,type DocumentationSettings,type NavigationGroup} from './structure';
 import {installCarouselHtml,installCarouselComponent,carouselRuntimeSource} from './carousel-publication';
 import {withoutEditorMetadata} from './editor-metadata';
 export type PublishConfig={provider:'github'|'gitlab';project:string;branch:string;host:string;token:string};
 type RepoFile={content:string;sha:string};
 export class Publisher {
   constructor(public config:PublishConfig){}
-  async publishStructure(groups:NavigationGroup[],base:NavigationGroup[]){
+  async publishStructure(groups:NavigationGroup[],base:NavigationGroup[],settings:DocumentationSettings={showOverviewPage:true},baseSettings:DocumentationSettings={showOverviewPage:true}){
     const c=this.config;if(!c.token.trim())throw new Error('Подключите GitHub для публикации структуры');
     if(c.provider!=='github')throw new Error('Публикация структуры доступна через GitHub');
     const head=await this.api('/git/ref/heads/'+encodeURIComponent(c.branch)),ref=head.object.sha;
     const loaded=await Promise.all(structurePaths.map(path=>this.file(path,ref)));
     const files:Record<string,string>={};structurePaths.forEach((path,i)=>{if(!loaded[i])throw new Error('Не найден файл документации: '+path);files[path]=loaded[i]!.content;});
-    const writes=structureWrites(files,groups,base);
+    const config=await this.file(documentationSettingsPath,ref);if(config)files[documentationSettingsPath]=config.content;
+    const writes=structureWrites(files,groups,base,settings,baseSettings);
     // Do not overwrite an existing route which is absent from navigation.
     for(const path of Object.keys(writes).filter(p=>p.endsWith('.md')))if(await this.file(path,ref))throw new Error('Адрес уже занят существующей страницей: '+path);
     const oldTitles=new Map(base.flatMap(g=>g.items.filter(p=>p.type!=='category').map(p=>[p.id,p.title])));

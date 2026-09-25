@@ -3,6 +3,20 @@ export type NavigationNode = {id:string;title:string;type?:'page'|'category';par
 export type NavigationGroup = {id:string;title:string;audience:Audience;description?:string;root?:boolean;hidden?:boolean;items:NavigationNode[];links?:{id:string;title:string;anchor?:string}[]};
 export type StructureNode = NavigationNode & {key:string;parent?:string;audience:Audience;group?:Omit<NavigationGroup,'items'>};
 
+export const documentationSettingsPath='src/content/documentation-settings.json';
+export type DocumentationSettings={showOverviewPage:boolean};
+export type StructureDraft={groups:NavigationGroup[];base:NavigationGroup[];settings:DocumentationSettings;baseSettings:DocumentationSettings};
+export function documentationSettings(value?:Partial<DocumentationSettings>|null):DocumentationSettings{return {showOverviewPage:value?.showOverviewPage!==false};}
+export function createStructureDraft(groups:NavigationGroup[],settings?:Partial<DocumentationSettings>):StructureDraft{
+  return {groups:structuredClone(groups),base:structuredClone(groups),settings:documentationSettings(settings),baseSettings:documentationSettings(settings)};
+}
+export function recoverStructureDraft(saved:Partial<StructureDraft>|null,published:StructureDraft):StructureDraft{
+  if(!saved)return published;
+  validateNavigation(saved.groups!);validateNavigation(saved.base!);
+  return {...published,...saved,settings:documentationSettings(saved.settings??published.settings),baseSettings:documentationSettings(saved.baseSettings??published.baseSettings)};
+}
+export function structureDirty(draft:StructureDraft){return JSON.stringify(draft.groups)!==JSON.stringify(draft.base)||draft.settings.showOverviewPage!==draft.baseSettings.showOverviewPage;}
+
 // The flat tree is a view of navigation.json, never a second persisted model.
 export function structureNodes(groups:NavigationGroup[]):StructureNode[]{
   return groups.flatMap(g=>[
