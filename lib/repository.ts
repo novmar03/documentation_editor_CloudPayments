@@ -24,13 +24,19 @@ export function normalizeConfig(input:RepoConfig):RepoConfig {
 }
 export class Repository {
   config:RepoConfig;ready=false;
+  private writes:Promise<unknown>=Promise.resolve();
+  private enqueueWrite<T>(action:()=>Promise<T>):Promise<T>{
+    const next=this.writes.then(action);
+    this.writes=next.catch(()=>{});
+    return next;
+  }
   constructor(config:RepoConfig){this.config=normalizeConfig(config);}
   async request(path:string,options:RequestInit={}):Promise<any>{
-    let response:Response;try{response=await fetch('https://api.github.com/repos/'+this.config.project+path,{...options,headers:{Authorization:'Bearer '+this.config.token,Accept:'application/vnd.github+json','Content-Type':'application/json',...options.headers}});}catch{throw new Error('Не удалось связаться с GitHub. Проверьте подключение к сети.');}
+    let response:Response;try{response=await fetch('https://api.github.com/repos/'+this.config.project+path,{...options,cache:'no-store',headers:{Authorization:'Bearer '+this.config.token,Accept:'application/vnd.github+json','Content-Type':'application/json',...options.headers}});}catch{throw new Error('Не удалось связаться с GitHub. Проверьте подключение к сети.');}
     if(!response.ok){
       const body=await response.json().catch(()=>null) as {message?:string;errors?:Array<string|{message?:string}>}|null;
       const githubMessage=[body?.message,...(Array.isArray(body?.errors)?body.errors.map(item=>typeof item==='string'?item:item?.message):[])].filter(v=>typeof v==='string').join('; ');
-      const e=new Error(response.status===401?'Токен GitHub недействителен или истёк':response.status===403?'У токена нет доступа к этому репозиторию':response.status===404?'Репозиторий или файл не найден':response.status===409||response.status===422?'Файл изменился в другом окне или защищён от записи. Ваши правки сохранены на устройстве.':`Ошибка GitHub (${response.status})`);Object.assign(e,{status:response.status,githubMessage});throw e;
+      const e=new Error(response.status===401?'Токен GitHub недействителен или истёк':response.status===403?'У токена нет доступа к этому репозиторию':response.status===404?'Репозиторий или файл не найден':response.status===409||response.status===422?`GitHub отклонил запись (${response.status}): ${githubMessage||'проверьте доступ и повторите попытку'}`:`Ошибка GitHub (${response.status})`);Object.assign(e,{status:response.status,githubMessage});throw e;
     }
     return response.status===204?null:response.json();
   }
@@ -62,16 +68,24 @@ export class Repository {
         await this.request('/git/refs/heads/'+DRAFT_BRANCH,{method:'PATCH',body:JSON.stringify({sha:next.sha,force:false})});
       }catch(error){
         // A branch race is safe to retry only after checking this page again.
-        if(attempt>=MAX_SAVE_ATTEMPTS||!isRefUpdateConflict(error))throw error;
+        if(!isRefUpdateConflict(error))throw error;
+        if(attempt>=MAX_SAVE_ATTEMPTS){
+          if(error instanceof Error)error.message='Ветка черновиков обновлялась во время сохранения. Правки остались на устройстве. Нажмите «Повторить».';
+          throw error;
+        }
+        await new Promise(resolve=>setTimeout(resolve,150*2**(attempt-1)+Math.floor(Math.random()*150)));
         continue;
       }
       return {...payload,content:normalized,commit:draftSha};
     }
   }
-  async save(draft:Draft,expectedSha=draft.commit):Promise<Draft>{return this.writeState({...draft,commit:expectedSha},draft.content);}
+  async save(draft:Draft,expectedSha=draft.commit):Promise<Draft>{return this.enqueueWrite(()=>this.writeState({...draft,commit:expectedSha},draft.content));}
   async history(id:string,locale:Locale='ru'){await this.ensureBranch();return this.request('/commits?sha='+DRAFT_BRANCH+'&path='+encodeURIComponent(this.draftPath(id,locale))+'&per_page=30');}
   async revision(id:string,sha:string,locale:Locale='ru'){const file=await this.file(this.draftPath(id,locale),sha);return readDraft({...JSON.parse(decodeText(file.content)),locale});}
   async upload(file:File){
+    return this.enqueueWrite(()=>this.uploadFile(file));
+  }
+  private async uploadFile(file:File){
     if(!['image/png','image/jpeg','image/webp','image/gif'].includes(file.type))throw new Error('Выберите PNG, JPG, WebP или GIF');if(file.size>5*1024*1024)throw new Error('Максимальный размер изображения — 5 МБ');
     await this.ensureBranch();const data=toBase64(new Uint8Array(await file.arrayBuffer())),path='editor-assets/'+crypto.randomUUID()+'.'+(file.type==='image/jpeg'?'jpg':file.type.split('/')[1]);
     await this.request('/contents/'+path,{method:'PUT',body:JSON.stringify({branch:DRAFT_BRANCH,content:data,message:'Добавить изображение [skip ci]'})});return {src:`data:${file.type};base64,${data}`,assetPath:path,alt:file.name};

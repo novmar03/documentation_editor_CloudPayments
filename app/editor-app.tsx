@@ -24,6 +24,7 @@ import {DocNode,normalizeHeadings,headings,moveSection,renderDocument,safeLink,t
 import {Repository,RepoConfig,Draft,storedDocument} from '@/lib/repository';
 import {replaceSelectedImage} from '@/lib/replace-image';
 import {cacheDraft,recoverDraft} from '@/lib/recovery';
+import {selectRecovery} from '@/lib/draft-recovery';
 import {ensureImageIds} from '@/lib/image-identity';
 import {loadPublishedPage,editorImageUrls} from '@/lib/published-page';
 import {Publisher} from '@/lib/publish';
@@ -80,17 +81,19 @@ export default function EditorApp(){
     if(!working.current)return;currentContent.current=doc;working.current={...working.current,content:doc,...(title!==undefined?{title}:{})};dirty.current++;setSaveState('dirty');setTick(t=>t+1);
     if(timer.current)clearTimeout(timer.current);timer.current=setTimeout(()=>{void saveRef.current();},1800);
   }
-  async function openPage(id:string,forceRemote=false,locale:Locale=loaded?.locale||'ru'){
+  async function openPage(id:string,forceRemote=false,locale:Locale=loaded?.locale||'ru',discardLocal=false){
     if(!pages[id]||opening.current||publishing)return;
     opening.current=true;
     if(timer.current)clearTimeout(timer.current);
-    if(working.current&&!(await saveRef.current())){toast.error('Сначала сохраните текущие изменения или скачайте HTML');opening.current=false;return;}
+    if(discardLocal&&inflight.current)await inflight.current;
+    if(!discardLocal&&working.current&&!(await saveRef.current())){toast.error('Сначала сохраните текущие изменения или скачайте HTML');opening.current=false;return;}
     setLoading(true);setPublication(null);
     try{
       const cached=await recoverDraft(id,locale).catch(()=>null);
       let draft=repoRef.current?await repoRef.current.load(id,locale):null;
-      const recovered=!forceRemote&&cached&&(!draft||cached.updated>draft.updated)?cached:null;
-      if(recovered)draft={...recovered,commit:repoRef.current?draft?.commit:recovered.commit};
+      const recovered=selectRecovery(cached,draft,forceRemote);
+      // The recovery copy retains the revision it was actually edited from.
+      if(recovered)draft={...recovered};
       if(draft&&repoRef.current)draft={...draft,content:await repoRef.current.hydrate(draft.content)};
       const item=pages[id];dirty.current=recovered?1:0;savedCounter.current=0;
       let initialHtml:string|undefined;
@@ -118,6 +121,7 @@ export default function EditorApp(){
       draft=draft||{id,locale,title:item.title,content:generateJSON(item.editorHtml,extensions()) as DocNode,updated:new Date().toISOString(),baseHtml:item.originalHtml};
       if(initialHtml)draft.content=generateJSON(initialHtml,extensions()) as DocNode;
       draft.content=editorImageUrls(await ensureImageIds(draft.content));
+      if(discardLocal)await cacheDraft(draft);
       working.current=draft;
       currentContent.current=draft.content;
       setLoaded({id,locale,title:draft.title,content:draft.content,draft,recovered:!!recovered});
@@ -138,7 +142,7 @@ export default function EditorApp(){
       const docs=new Repository({project:DOCS_REPO,defaultBranch:'main',token});await docs.connect();
       repoRef.current=repo;setRepository(repo);setToken('');setConnectionOpen(false);toast.success('GitHub подключён');
       if(working.current){const remote=await repo.load(working.current.id,working.current.locale);if(remote){
-        if(dirty.current>savedCounter.current){working.current.commit=remote.commit;toast.info('Найден черновик в GitHub. Сравните версии в истории перед публикацией.');}
+        if(dirty.current>savedCounter.current){toast.info('Найден черновик в GitHub. Проверяем, не изменилась ли эта страница.');}
         else{await openPage(working.current.id,true,working.current.locale||'ru');return;}
       }else if(dirty.current===savedCounter.current){await openPage(working.current.id,true,working.current.locale||'ru');return;}await saveRef.current();}
     }catch(e){toast.error(errorText(e));}finally{setConnecting(false);}
@@ -186,7 +190,7 @@ export default function EditorApp(){
     </Sidebar>
     <SidebarInset className="editor-inset"><div hidden={!structureOpen}><StructureManager repository={repository} onOpen={id=>{void openPage(id).then(()=>setStructureOpen(false));}} onConnect={()=>setConnectionOpen(true)} onChange={()=>{setTick(t=>t+1);if(!working.current)void openPage(pages[initial.id]?initial.id:'tech/api',false,initial.locale);}} onClose={()=>setStructureOpen(false)}/></div><div hidden={structureOpen}><header className="workspace-header"><div className="workspace-heading"><SidebarTrigger/><span>Рабочее пространство</span><ChevronRight size={14}/><strong>{loaded?.title||'Документация'}</strong></div><div className="header-actions"><IconButton label="История версий" onClick={()=>void showHistory()}><History size={18}/></IconButton><IconButton label="Скачать страницу HTML" onClick={download}><Download size={18}/></IconButton><Button variant="outline" onClick={()=>setPreview(v=>!v)}><Eye size={16}/><span className="optional-label">{preview?'Редактировать':'Предпросмотр'}</span></Button><Button variant="outline" onClick={()=>repository?void saveRef.current().then(ok=>{if(ok)toast.success('Черновик сохранён');}):setConnectionOpen(true)} disabled={saveState==='saving'}>{saveState==='saving'?<Loader2 className="spin" size={16}/>:<Save size={16}/>}<span className="optional-label">Сохранить</span></Button><Button onClick={()=>repository?setPublishOpen(true):setConnectionOpen(true)} disabled={publishing||loading}><Upload size={16}/><span>Опубликовать</span></Button></div></header>
       <div className="document-status"><span className="level-tag">{loaded?.locale==='en'?'EN · Английская версия':'RU · Русская версия'}</span><span className={'save-label '+saveState}>{saveState==='saving'?<Loader2 className="spin" size={14}/>:saveState==='saved'?<Cloud size={15}/>:saveState==='error'?<CloudOff size={15}/>:<FileText size={14}/>}<span role="status">{statusText}</span>{saveState==='saved'&&savedAt&&<time>{new Date(savedAt).toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'})}</time>}</span><Button className="mobile-settings" variant="ghost" size="sm" onClick={()=>setSettingsOpen(true)}><Settings2 size={16}/>Настройки</Button></div>
-      {saveError&&<div className="error-strip" role="alert">{saveError}<Button variant="outline" size="sm" onClick={()=>void saveRef.current()}>Повторить</Button></div>}
+      {saveError&&<div className="error-strip" role="alert">{saveError}<Button variant="outline" size="sm" onClick={()=>void saveRef.current()}>Повторить</Button>{repository&&<Button variant="outline" size="sm" onClick={()=>{if(loaded&&window.confirm('Загрузить версию из GitHub и отказаться от текущих правок? Чтобы сохранить их отдельно, сначала скачайте HTML.'))void openPage(loaded.id,true,loaded.locale,true);}}>Загрузить из GitHub</Button>}</div>}
       {publication&&<div className="published-strip"><Check size={16}/>Страница отправлена на публикацию.<a href={pageUrl(DOCS_URL,loaded?.id||'',loaded?.locale)} target="_blank" rel="noopener noreferrer">Открыть сайт</a></div>}
       <div className={'workspace-body '+(preview?'preview-mode':'')}><div className="editor-center">{loading||!loaded?<div className="loading-page"><Loader2 className="spin"/><span>Загружаем страницу…</span></div>:<DocumentWorkspace key={draftKey(loaded.id,loaded.locale)+(loaded.draft?.updated||'')} loaded={loaded} preview={preview} onEditor={ed=>{setEditor(ed);latestEditor.current=ed;}} onSelection={()=>setTick(t=>t+1)} onReady={doc=>{currentContent.current=doc;if(working.current)working.current.content=doc;}} onChange={changed} onTitle={title=>{setLoaded(old=>old?{...old,title}:old);setTitles(old=>({...old,[draftKey(loaded.id,loaded.locale)]:title}));changed(currentContent.current,title);}} onConnect={()=>setConnectionOpen(true)} repository={repository}/>}</div>{!preview&&<aside className="properties-panel">{pageSettings}<div className="properties-heading"><Settings2 size={17}/><h2>Настройки блока</h2></div>{properties}</aside>}</div>
       <footer className="workspace-footer"><span>{outline.length} заголовков</span><span>API и его подглавы остаются на одной странице</span><span>CloudPayments</span></footer>
